@@ -1,0 +1,45 @@
+name: Publish plugin release assets
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    if: contains(github.event.head_commit.message, '[release-assets]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint plugin
+        run: npm run lint
+
+      - name: Build plugin
+        run: npm run build:plugin
+
+      - name: Read release version
+        id: manifest
+        shell: bash
+        run: |
+          PLUGIN_RELEASE_VERSION="$(node -p "require('./manifest.json').version")"
+          echo "version=$PLUGIN_RELEASE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.manifest.outputs.version }}
+        run: gh release create "$RELEASE_VERSION" main.js manifest.json styles.css --title "CosmoGraph 3D $RELEASE_VERSION" --notes "Community directory submission build with the catalog-compatible plugin ID."
