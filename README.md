@@ -27,7 +27,7 @@
 </p>
 
 > [!IMPORTANT]
-> CosmoGraph is available as a public beta for Obsidian. Install the current release with BRAT or manually while the plugin is being reviewed for the Community Plugins directory.
+> CosmoGraph is available in the official Obsidian Community Plugins directory. Install the stable release from Obsidian, or use BRAT to follow beta releases.
 
 ## Your vault has shape
 
@@ -53,6 +53,14 @@ CosmoGraph is designed as an immersive alternative to the traditional Obsidian g
 - Keeps vault data local. The plugin does not upload notes to a server.
 
 ## Install the Obsidian plugin
+
+### Install from Community Plugins
+
+1. Open **Settings → Community plugins** in Obsidian.
+2. Select **Browse** and search for **CosmoGraph 3D**.
+3. Select **Install**, then **Enable**.
+
+You can also open the listing directly with [Add to Obsidian](https://obsidian.md/plugins?id=cosmograph).
 
 ### Install with BRAT
 
@@ -156,7 +164,7 @@ The native **CosmoGraph 3D** plugin uses the plugin ID `cosmograph`. The next mi
 - Add controls for clusters, labels, colors, terrain, and performance.
 - Optimize rendering for large vaults and lower-powered devices.
 - Improve touch controls and performance for mobile devices.
-- Complete the Community Plugins review and move from beta to a stable release.
+- Continue refining the stable release while shipping experimental features through BRAT.
 
 ## Why a sphere?
 
@@ -186,7 +194,7 @@ CosmoGraph is local-first.
 
 ### Is CosmoGraph already an Obsidian plugin?
 
-Yes. The repository contains both the native Obsidian plugin and the original web prototype. The plugin is currently distributed as a public beta through GitHub Releases and BRAT.
+Yes. The repository contains both the native Obsidian plugin and the original web prototype. The stable plugin is available from the Community Plugins directory, while beta releases are available through GitHub Releases and BRAT.
 
 ### Can I visualize my real Obsidian vault?
 
