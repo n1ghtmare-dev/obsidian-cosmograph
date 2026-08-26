@@ -3,7 +3,7 @@ name: Publish plugin release assets
 on:
   workflow_dispatch:
   schedule:
-    - cron: "47 * * * *"
+    - cron: "2 * * * *"
 
 permissions:
   contents: write
