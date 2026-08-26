@@ -27,7 +27,7 @@
 </p>
 
 > [!IMPORTANT]
-> CosmoGraph is now a working Obsidian plugin in beta. It can be built and installed manually while the first public release is prepared for the Community Plugins directory.
+> CosmoGraph is available as a public beta for Obsidian. Install the current release with BRAT or manually while the plugin is being reviewed for the Community Plugins directory.
 
 ## Your vault has shape
 
@@ -53,6 +53,15 @@ CosmoGraph is designed as an immersive alternative to the traditional Obsidian g
 - Keeps vault data local. The plugin does not upload notes to a server.
 
 ## Install the Obsidian plugin
+
+### Install with BRAT
+
+1. Install and enable [BRAT](https://obsidian.md/plugins?id=obsidian42-brat) from the Obsidian Community Plugins directory.
+2. Open **Settings → BRAT → Add Beta plugin**.
+3. Enter `https://github.com/n1ghtmare-dev/obsidian-cosmograph` and select **Add Plugin**.
+4. Open **Settings → Community plugins** and enable **CosmoGraph 3D**.
+
+BRAT installs the latest files from the [CosmoGraph GitHub release](https://github.com/n1ghtmare-dev/obsidian-cosmograph/releases/latest).
 
 ### Build from source
 
@@ -146,8 +155,8 @@ The native **CosmoGraph 3D** plugin uses the plugin ID `cosmograph-3d`. The next
 
 - Add controls for clusters, labels, colors, terrain, and performance.
 - Optimize rendering for large vaults and lower-powered devices.
-- Publish beta builds through GitHub Releases and BRAT.
-- Submit the stable release to the Obsidian Community Plugins directory.
+- Improve touch controls and performance for mobile devices.
+- Complete the Community Plugins review and move from beta to a stable release.
 
 ## Why a sphere?
 
@@ -160,9 +169,8 @@ The long-term vision is not simply a 3D graph. It is a navigable knowledge plane
 CosmoGraph is local-first.
 
 - Markdown files are read on the user's device.
-- The current prototype makes no request to an analytics or storage backend.
+- The plugin and web prototype make no requests to analytics or storage backends.
 - Vault contents are not uploaded by CosmoGraph.
-- The planned Obsidian plugin will preserve the same local-first model.
 
 ## Technology
 
@@ -178,7 +186,7 @@ CosmoGraph is local-first.
 
 ### Is CosmoGraph already an Obsidian plugin?
 
-Yes. The repository contains both the native Obsidian plugin and the original web prototype. The plugin is currently distributed as a manual beta build.
+Yes. The repository contains both the native Obsidian plugin and the original web prototype. The plugin is currently distributed as a public beta through GitHub Releases and BRAT.
 
 ### Can I visualize my real Obsidian vault?
 
