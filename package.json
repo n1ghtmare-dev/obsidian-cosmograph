@@ -1,0 +1,38 @@
+{
+  "name": "obsidian-cosmograph",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Immersive 3D spherical knowledge graph for Obsidian vaults.",
+  "license": "MIT",
+  "author": "n1ghtmare-dev",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/n1ghtmare-dev/obsidian-cosmograph.git"
+  },
+  "homepage": "https://github.com/n1ghtmare-dev/obsidian-cosmograph#readme",
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "knowledge-graph",
+    "3d-visualization",
+    "graph-view",
+    "threejs",
+    "markdown",
+    "pkm",
+    "second-brain"
+  ],
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.179.1"
+  },
+  "devDependencies": {
+    "@types/three": "^0.179.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}
