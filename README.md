@@ -14,20 +14,20 @@
 <p align="center">
   <a href="#run-the-web-prototype">Run locally</a>
   &nbsp;|&nbsp;
-  <a href="#obsidian-plugin-roadmap">Plugin roadmap</a>
+  <a href="#install-the-obsidian-plugin">Install the plugin</a>
   &nbsp;|&nbsp;
   <a href="#how-it-works">How it works</a>
 </p>
 
 <p align="center">
-  <img alt="CosmoGraph prototype status" src="https://img.shields.io/badge/status-web_prototype-91a7ff?style=flat-square" />
+  <img alt="CosmoGraph beta status" src="https://img.shields.io/badge/status-Obsidian_plugin_beta-91a7ff?style=flat-square" />
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5.9-6f8fd8?style=flat-square&logo=typescript&logoColor=white" />
   <img alt="Three.js" src="https://img.shields.io/badge/Three.js-WebGL-c58fb5?style=flat-square&logo=threedotjs&logoColor=white" />
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-8496bd?style=flat-square" /></a>
 </p>
 
 > [!IMPORTANT]
-> CosmoGraph is currently an interactive web prototype. The native Obsidian community plugin is the next major milestone.
+> CosmoGraph is now a working Obsidian plugin in beta. It can be built and installed manually while the first public release is prepared for the Community Plugins directory.
 
 ## Your vault has shape
 
@@ -37,7 +37,7 @@ Notes become luminous points on a procedural planet. Links form a network across
 
 CosmoGraph is designed as an immersive alternative to the traditional Obsidian graph view, with a strong emphasis on spatial memory, clarity, and atmosphere.
 
-## What the prototype already does
+## What CosmoGraph already does
 
 - Renders an interactive 3D spherical knowledge graph with Three.js and WebGL.
 - Reads a local folder of Markdown notes directly in the browser.
@@ -47,7 +47,40 @@ CosmoGraph is designed as an immersive alternative to the traditional Obsidian g
 - Generates irregular terrain, craters, particles, atmosphere, and depth.
 - Supports orbit rotation, inertial dragging, zoom, hover, search, and selection.
 - Smoothly rotates the sphere when a note is selected.
-- Keeps vault data local. The prototype does not upload notes to a server.
+- Opens real notes directly from the graph details panel.
+- Updates when notes are created, renamed, deleted, or relinked.
+- Provides a ribbon action, command palette actions, plugin settings, and an immersive scene mode.
+- Keeps vault data local. The plugin does not upload notes to a server.
+
+## Install the Obsidian plugin
+
+### Build from source
+
+```bash
+git clone git@github.com:n1ghtmare-dev/obsidian-cosmograph.git
+cd obsidian-cosmograph
+npm install
+npm run build:plugin
+```
+
+The build creates `main.js` in the repository root. Copy these files into your vault:
+
+```text
+Your Vault/.obsidian/plugins/cosmograph-3d/
+├── main.js
+└── manifest.json
+```
+
+Restart Obsidian, open **Settings → Community plugins**, and enable **CosmoGraph 3D**. Use the orbit icon in the ribbon or run **CosmoGraph 3D: Open 3D knowledge graph** from the command palette.
+
+### Plugin controls
+
+- Drag to rotate the planet and scroll to zoom.
+- Select a node to focus it and inspect its links.
+- Select **Open note** in the details panel to open the Markdown file.
+- Use the folder list or search field to filter nodes.
+- Switch between **Calm** and **Radiant** visual modes.
+- Select **Scene** to hide the interface and leave only the knowledge planet.
 
 ## Run the web prototype
 
@@ -101,18 +134,16 @@ Interactive Three.js knowledge graph
 | `src/graph/SphericalGraph.ts` | Builds the terrain, nodes, links, labels, lighting, and interactions. |
 | `src/main.ts` | Connects the graph renderer to search, vault selection, and note details. |
 | `src/data/sample.ts` | Provides a sample vault graph for instant local preview. |
+| `src/obsidian/plugin.ts` | Registers the Obsidian view, commands, ribbon action, and settings. |
+| `src/obsidian/CosmographView.ts` | Hosts the full graph interface inside an Obsidian `ItemView`. |
+| `src/obsidian/vaultGraph.ts` | Builds live graph data from the Obsidian vault and metadata cache. |
 
-The renderer and parser are intentionally separated from the Obsidian API. This makes the current web prototype useful as a visual laboratory while keeping the core ready for migration into an Obsidian `ItemView`.
+The renderer remains separate from the Obsidian API, so the web prototype can continue as a visual laboratory while the native plugin uses the same rendering engine inside an Obsidian `ItemView`.
 
-## Obsidian plugin roadmap
+## Plugin roadmap
 
-The goal is a native **CosmoGraph 3D** community plugin with the plugin ID `cosmograph-3d`.
+The native **CosmoGraph 3D** plugin uses the plugin ID `cosmograph-3d`. The next milestones are:
 
-- Package the renderer inside an Obsidian `ItemView`.
-- Replace browser folder selection with `app.vault.getMarkdownFiles()`.
-- Use `metadataCache.resolvedLinks` for live vault connections.
-- Open notes directly from graph nodes.
-- React to note creation, rename, deletion, and metadata changes.
 - Add controls for clusters, labels, colors, terrain, and performance.
 - Optimize rendering for large vaults and lower-powered devices.
 - Publish beta builds through GitHub Releases and BRAT.
@@ -147,11 +178,11 @@ CosmoGraph is local-first.
 
 ### Is CosmoGraph already an Obsidian plugin?
 
-Not yet. This repository currently contains the working web prototype. Native Obsidian integration is the next development phase.
+Yes. The repository contains both the native Obsidian plugin and the original web prototype. The plugin is currently distributed as a manual beta build.
 
 ### Can I visualize my real Obsidian vault?
 
-Yes. Run the prototype locally, choose **Open vault**, and select the folder that contains your Markdown notes.
+Yes. The plugin reads the currently open vault automatically. The web prototype can also read a local Markdown folder selected in the browser.
 
 ### Does CosmoGraph modify my notes?
 

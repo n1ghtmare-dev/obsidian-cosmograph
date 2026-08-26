@@ -1,6 +1,6 @@
 import "./style.css";
 import { sampleGraph } from "./data/sample";
-import { SphericalGraph } from "./graph/SphericalGraph";
+import { SphericalGraph, type SphereStyle } from "./graph/SphericalGraph";
 import type { GraphData, GraphNode } from "./types";
 import { parseVaultFiles } from "./vault";
 
@@ -9,6 +9,15 @@ if (!app) throw new Error("App root is missing");
 
 app.innerHTML = `
   <main class="app-shell">
+    <button
+      class="immersive-toggle"
+      id="immersive-toggle"
+      type="button"
+      aria-pressed="false"
+      aria-label="Скрыть интерфейс"
+      title="Скрыть интерфейс"
+    >Сцена</button>
+
     <header class="topbar">
       <div class="brand" aria-label="CosmoGraph">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
@@ -53,7 +62,10 @@ app.innerHTML = `
     </aside>
 
     <footer class="view-dock" aria-label="Режим отображения">
-      <button type="button" class="is-active">Сфера</button>
+      <div class="sphere-style-switch" role="group" aria-label="Стиль сферы">
+        <button type="button" data-sphere-style="calm" aria-pressed="false">Мягкая</button>
+        <button type="button" data-sphere-style="radiant" aria-pressed="true" class="is-active">Сияние</button>
+      </div>
       <button type="button" id="focus-button">Фокус</button>
       <span id="dock-status">Демо</span>
     </footer>
@@ -66,6 +78,8 @@ app.innerHTML = `
 `;
 
 const canvas = document.querySelector<HTMLCanvasElement>("#graph-canvas")!;
+const shell = document.querySelector<HTMLElement>(".app-shell")!;
+const immersiveToggle = document.querySelector<HTMLButtonElement>("#immersive-toggle")!;
 const fileInput = document.querySelector<HTMLInputElement>("#vault-input")!;
 const searchInput = document.querySelector<HTMLInputElement>("#search-input")!;
 const groupList = document.querySelector<HTMLElement>("#group-list")!;
@@ -83,10 +97,48 @@ const panelClose = document.querySelector<HTMLButtonElement>("#panel-close")!;
 const focusButton = document.querySelector<HTMLButtonElement>("#focus-button")!;
 const tooltip = document.querySelector<HTMLElement>("#node-tooltip")!;
 const loadingState = document.querySelector<HTMLElement>("#loading-state")!;
+const sphereStyleButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-sphere-style]")];
 
 let currentGraph = sampleGraph;
 let currentNode: GraphNode | null = null;
+let isImmersive = false;
 const graph = new SphericalGraph(canvas);
+const SPHERE_STYLE_KEY = "cosmograph-sphere-style";
+
+function setImmersive(next: boolean) {
+  isImmersive = next;
+  shell.classList.toggle("is-immersive", next);
+  immersiveToggle.classList.toggle("is-active", next);
+  immersiveToggle.setAttribute("aria-pressed", String(next));
+  immersiveToggle.setAttribute("aria-label", next ? "Показать интерфейс" : "Скрыть интерфейс");
+  immersiveToggle.title = next ? "Показать интерфейс" : "Скрыть интерфейс";
+  immersiveToggle.textContent = next ? "UI" : "Сцена";
+  if (next) tooltip.hidden = true;
+}
+
+function setSphereStyle(style: SphereStyle) {
+  graph.setSphereStyle(style);
+  shell.dataset.sphereStyle = style;
+  sphereStyleButtons.forEach((button) => {
+    const active = button.dataset.sphereStyle === style;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  try {
+    window.localStorage.setItem(SPHERE_STYLE_KEY, style);
+  } catch {
+    // The visual preference remains active for the current session.
+  }
+}
+
+let initialSphereStyle: SphereStyle = "radiant";
+try {
+  const storedStyle = window.localStorage.getItem(SPHERE_STYLE_KEY);
+  if (storedStyle === "calm" || storedStyle === "radiant") initialSphereStyle = storedStyle;
+} catch {
+  // Storage can be unavailable in privacy-restricted browser contexts.
+}
+setSphereStyle(initialSphereStyle);
 
 function renderGroupList(data: GraphData) {
   const counts = new Map<string, number>();
@@ -199,6 +251,13 @@ panelClose.addEventListener("click", () => showNode(null));
 focusButton.addEventListener("click", () => {
   const target = currentNode ?? graph.getPrimaryNode();
   if (target) graph.focusNode(target.id);
+});
+sphereStyleButtons.forEach((button) => {
+  button.addEventListener("click", () => setSphereStyle(button.dataset.sphereStyle as SphereStyle));
+});
+immersiveToggle.addEventListener("click", () => setImmersive(!isImmersive));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && isImmersive) setImmersive(false);
 });
 
 setGraphData(sampleGraph, "Демо");

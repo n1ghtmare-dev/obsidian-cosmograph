@@ -1,0 +1,64 @@
+import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import type { SphereStyle } from "../graph/SphericalGraph";
+
+export type CosmographSettings = {
+  sphereStyle: SphereStyle;
+  openNotesInNewTab: boolean;
+  refreshAutomatically: boolean;
+};
+
+export const DEFAULT_SETTINGS: CosmographSettings = {
+  sphereStyle: "radiant",
+  openNotesInNewTab: true,
+  refreshAutomatically: true,
+};
+
+export type SettingsController = Plugin & {
+  settings: CosmographSettings;
+  saveSettings(): Promise<void>;
+  applySettingsToViews(): void;
+};
+
+export class CosmographSettingTab extends PluginSettingTab {
+  constructor(app: App, private readonly controller: SettingsController) {
+    super(app, controller);
+  }
+
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+
+    new Setting(containerEl)
+      .setName("Sphere style")
+      .setDesc("Choose the default visual palette for the knowledge planet.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("radiant", "Radiant")
+        .addOption("calm", "Calm")
+        .setValue(this.controller.settings.sphereStyle)
+        .onChange(async (value) => {
+          this.controller.settings.sphereStyle = value as SphereStyle;
+          await this.controller.saveSettings();
+          this.controller.applySettingsToViews();
+        }));
+
+    new Setting(containerEl)
+      .setName("Open notes in a new tab")
+      .setDesc("Keep CosmoGraph visible when opening a note from the details panel.")
+      .addToggle((toggle) => toggle
+        .setValue(this.controller.settings.openNotesInNewTab)
+        .onChange(async (value) => {
+          this.controller.settings.openNotesInNewTab = value;
+          await this.controller.saveSettings();
+        }));
+
+    new Setting(containerEl)
+      .setName("Refresh automatically")
+      .setDesc("Rebuild the graph when notes or resolved links change.")
+      .addToggle((toggle) => toggle
+        .setValue(this.controller.settings.refreshAutomatically)
+        .onChange(async (value) => {
+          this.controller.settings.refreshAutomatically = value;
+          await this.controller.saveSettings();
+        }));
+  }
+}

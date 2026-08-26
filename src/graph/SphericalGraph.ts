@@ -8,6 +8,7 @@ import type { GraphData, GraphNode } from "../types";
 
 type SelectHandler = (node: GraphNode | null) => void;
 type HoverHandler = (node: GraphNode | null, x: number, y: number) => void;
+export type SphereStyle = "calm" | "radiant";
 
 type NodeVisual = {
   node: GraphNode;
@@ -19,13 +20,34 @@ type NodeVisual = {
   glow: THREE.Sprite;
   label?: CSS2DObject;
   baseScale: number;
+  calmColor: THREE.Color;
+  radiantColor: THREE.Color;
 };
 
 const SPHERE_RADIUS = 3.66;
-const NOTE_COLORS = [0xa6c9ff, 0x7796ef, 0xa79de9, 0xd3a0be, 0x7db8c2, 0xbdacd9];
-const PRIMARY_COLOR = 0xe2a0c5;
+const RADIANT_NOTE_COLORS = [0x8fdcff, 0x718dff, 0xa980ff, 0xea87e6, 0x71e0df, 0xc4a1ff];
+const CALM_NOTE_COLORS = [0xa6c9ff, 0x7796ef, 0xa79de9, 0xd3a0be, 0x7db8c2, 0xbdacd9];
+const RADIANT_PRIMARY_COLOR = 0xff91dc;
+const CALM_PRIMARY_COLOR = 0xe2a0c5;
+const NODE_HIGHLIGHT_COLOR = new THREE.Color(0xf0f4fb);
 
 type TerrainProfile = { displacement: number; ridge: number };
+
+type StyledPointCloud = {
+  points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
+  calmColors: THREE.BufferAttribute;
+  radiantColors: THREE.BufferAttribute;
+  calmOpacity: number;
+  radiantOpacity: number;
+  calmSize: number;
+  radiantSize: number;
+};
+
+type StyledLineMaterial = {
+  material: THREE.LineBasicMaterial;
+  calmColor: THREE.Color;
+  radiantColor: THREE.Color;
+};
 
 type TerrainCrater = {
   center: THREE.Vector3;
@@ -204,6 +226,9 @@ function createGlowTexture(size = 128) {
   context.fillRect(0, 0, size, size);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
   return texture;
 }
 
@@ -237,6 +262,9 @@ function createNodeMarkerTexture(size = 192) {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
   return texture;
 }
 
@@ -259,6 +287,19 @@ export class SphericalGraph {
   private readonly clock = new THREE.Clock();
   private readonly glowTexture = createGlowTexture();
   private readonly nodeMarkerTexture = createNodeMarkerTexture();
+  private readonly animatedMaterials: THREE.ShaderMaterial[] = [];
+  private readonly styledPointClouds: StyledPointCloud[] = [];
+  private readonly styledLineMaterials: StyledLineMaterial[] = [];
+  private terrainSurface!: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  private calmSurfaceMaterial!: THREE.MeshStandardMaterial;
+  private radiantSurfaceMaterial!: THREE.ShaderMaterial;
+  private atmosphere!: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
+  private calmAtmosphereMaterial!: THREE.ShaderMaterial;
+  private radiantAtmosphereMaterial!: THREE.ShaderMaterial;
+  private orbitingMotes!: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private orbitingMoteCalmColors!: THREE.BufferAttribute;
+  private orbitingMoteRadiantColors!: THREE.BufferAttribute;
+  private sphereStyle: SphereStyle = "radiant";
   private readonly nodeVisuals: NodeVisual[] = [];
   private readonly hitMeshes: THREE.Mesh[] = [];
   private readonly degrees = new Map<string, number>();
@@ -295,13 +336,13 @@ export class SphericalGraph {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.97;
-    this.renderer.setClearColor(0x02040a, 1);
+    this.renderer.toneMappingExposure = 0.96;
+    this.renderer.setClearColor(0x02020b, 1);
     this.camera.position.set(0, 0, 12);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.86, 0.46, 0.5);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.82, 0.5, 0.62);
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
@@ -309,19 +350,24 @@ export class SphericalGraph {
     (canvas.parentElement ?? document.body).appendChild(this.labelRenderer.domElement);
 
     this.scene.add(this.createStarfield());
-    this.scene.add(new THREE.HemisphereLight(0x8297c2, 0x02040a, 0.3));
-    const terrainLight = new THREE.DirectionalLight(0xc7d6ff, 2.5);
+    this.scene.add(new THREE.HemisphereLight(0x8abaff, 0x060214, 0.34));
+    const terrainLight = new THREE.DirectionalLight(0xdbe8ff, 2.9);
     terrainLight.position.set(-4.5, 6.5, 8);
     this.scene.add(terrainLight);
     this.scene.add(this.root);
-    this.root.add(this.createTerrainSurface());
-    this.root.add(this.createAtmosphere());
+    this.terrainSurface = this.createTerrainSurface();
+    this.atmosphere = this.createAtmosphere();
+    this.root.add(this.terrainSurface);
+    this.root.add(this.atmosphere);
     this.root.add(this.createShellDust());
     this.root.add(this.createTerrainAccents());
     this.root.add(this.createSparkleShell());
     this.root.add(this.createInnerDust());
+    this.orbitingMotes = this.createOrbitingMotes();
+    this.root.add(this.orbitingMotes);
     this.root.add(this.networkRoot);
     this.root.rotation.set(-0.035, -0.12, 0.015);
+    this.setSphereStyle("radiant");
 
     this.bindEvents();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -337,6 +383,44 @@ export class SphericalGraph {
 
   getPrimaryNode() {
     return this.primaryNode;
+  }
+
+  setSphereStyle(style: SphereStyle) {
+    this.sphereStyle = style;
+    const radiant = style === "radiant";
+    this.terrainSurface.material = radiant ? this.radiantSurfaceMaterial : this.calmSurfaceMaterial;
+    this.atmosphere.material = radiant ? this.radiantAtmosphereMaterial : this.calmAtmosphereMaterial;
+    this.renderer.toneMappingExposure = radiant ? 0.96 : 0.97;
+    this.bloomPass.strength = radiant ? 0.82 : 0.86;
+    this.bloomPass.radius = radiant ? 0.5 : 0.46;
+    this.bloomPass.threshold = radiant ? 0.62 : 0.5;
+    this.styledPointClouds.forEach((entry) => {
+      entry.points.geometry.setAttribute("color", radiant ? entry.radiantColors : entry.calmColors);
+      entry.points.material.opacity = radiant ? entry.radiantOpacity : entry.calmOpacity;
+      entry.points.material.size = radiant ? entry.radiantSize : entry.calmSize;
+      entry.points.material.needsUpdate = true;
+    });
+    if (this.orbitingMotes) {
+      this.orbitingMotes.geometry.setAttribute("color", radiant ? this.orbitingMoteRadiantColors : this.orbitingMoteCalmColors);
+      this.orbitingMotes.material.uniforms.uOpacity.value = radiant ? 0.88 : 0.62;
+      this.orbitingMotes.material.uniforms.uPointSize.value = radiant ? 0.031 : 0.024;
+      this.orbitingMotes.material.uniforms.uMotionScale.value = radiant ? 1 : 0.64;
+    }
+    this.applyNodePalette();
+  }
+
+  private applyNodePalette() {
+    const radiant = this.sphereStyle === "radiant";
+    this.nodeVisuals.forEach((visual) => {
+      const color = radiant ? visual.radiantColor : visual.calmColor;
+      visual.core.material.color.copy(color);
+      visual.inner.material.color.copy(color).lerp(NODE_HIGHLIGHT_COLOR, visual.node.kind === "cluster" ? 0.76 : 0.64);
+      (visual.marker.material as THREE.SpriteMaterial).color.copy(color);
+      (visual.glow.material as THREE.SpriteMaterial).color.copy(color);
+    });
+    this.styledLineMaterials.forEach((entry) => {
+      entry.material.color.copy(radiant ? entry.radiantColor : entry.calmColor);
+    });
   }
 
   setData(data: GraphData) {
@@ -361,7 +445,8 @@ export class SphericalGraph {
     });
 
     const positions = new Map<string, THREE.Vector3>();
-    const colorByGroup = new Map<string, number>();
+    const radiantColorByGroup = new Map<string, number>();
+    const calmColorByGroup = new Map<string, number>();
     const clusterNodes: GraphNode[] = [];
 
     orderedGroups.forEach(([groupName, notes], groupIndex) => {
@@ -374,8 +459,14 @@ export class SphericalGraph {
         kind: "cluster",
         noteCount: notes.length,
       };
-      const color = groupIndex === 0 ? PRIMARY_COLOR : NOTE_COLORS[(groupIndex - 1) % NOTE_COLORS.length];
-      colorByGroup.set(groupName, color);
+      const radiantColor = groupIndex === 0
+        ? RADIANT_PRIMARY_COLOR
+        : RADIANT_NOTE_COLORS[(groupIndex - 1) % RADIANT_NOTE_COLORS.length];
+      const calmColor = groupIndex === 0
+        ? CALM_PRIMARY_COLOR
+        : CALM_NOTE_COLORS[(groupIndex - 1) % CALM_NOTE_COLORS.length];
+      radiantColorByGroup.set(groupName, radiantColor);
+      calmColorByGroup.set(groupName, calmColor);
       clusterNodes.push(cluster);
       positions.set(cluster.id, anchor.clone().multiplyScalar(terrainRadius(anchor) + 0.045));
       if (groupIndex === 0) this.primaryNode = cluster;
@@ -395,7 +486,7 @@ export class SphericalGraph {
     });
 
     this.networkRoot.add(this.createAmbientNetwork());
-    this.networkRoot.add(this.createGraphLines(data, orderedGroups, clusterNodes, positions, colorByGroup));
+    this.networkRoot.add(this.createGraphLines(data, orderedGroups, clusterNodes, positions, radiantColorByGroup));
 
     const rankedNotes = [...data.nodes]
       .sort((a, b) => (this.degrees.get(b.id) ?? 0) - (this.degrees.get(a.id) ?? 0))
@@ -403,18 +494,39 @@ export class SphericalGraph {
     const labeledIds = new Set(rankedNotes.map((node) => node.id));
 
     clusterNodes.forEach((cluster, index) => {
-      const visual = this.createNodeVisual(cluster, positions.get(cluster.id)!, colorByGroup.get(cluster.group)!, true, true);
+      const visual = this.createNodeVisual(
+        cluster,
+        positions.get(cluster.id)!,
+        radiantColorByGroup.get(cluster.group)!,
+        calmColorByGroup.get(cluster.group)!,
+        true,
+        true,
+      );
       this.nodeVisuals.push(visual);
       this.networkRoot.add(visual.group);
-      if (index === 0) this.networkRoot.add(this.createHubRings(positions.get(cluster.id)!, colorByGroup.get(cluster.group)!));
+      if (index === 0) {
+        this.networkRoot.add(this.createHubRings(
+          positions.get(cluster.id)!,
+          radiantColorByGroup.get(cluster.group)!,
+          calmColorByGroup.get(cluster.group)!,
+        ));
+      }
     });
 
     data.nodes.forEach((node) => {
-      const visual = this.createNodeVisual(node, positions.get(node.id)!, colorByGroup.get(node.group)!, false, labeledIds.has(node.id));
+      const visual = this.createNodeVisual(
+        node,
+        positions.get(node.id)!,
+        radiantColorByGroup.get(node.group)!,
+        calmColorByGroup.get(node.group)!,
+        false,
+        labeledIds.has(node.id),
+      );
       this.nodeVisuals.push(visual);
       this.networkRoot.add(visual.group);
     });
 
+    this.applyNodePalette();
     this.applyVisualState();
   }
 
@@ -471,6 +583,7 @@ export class SphericalGraph {
       vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      alphaTest: 0.01,
     }));
   }
 
@@ -491,18 +604,27 @@ export class SphericalGraph {
   private createTerrainSurface() {
     const geometry = this.createTerrainGeometry(128, 96);
     const positions = geometry.getAttribute("position") as THREE.BufferAttribute;
-    const colors = new Float32Array(positions.count * 3);
+    const elevations = new Float32Array(positions.count);
+    const ridges = new Float32Array(positions.count);
+    const directions = new Float32Array(positions.count * 3);
+    const calmColors = new Float32Array(positions.count * 3);
     const direction = new THREE.Vector3();
     for (let index = 0; index < positions.count; index += 1) {
       direction.fromBufferAttribute(positions, index).normalize();
       const profile = terrainProfile(direction);
-      const elevation = THREE.MathUtils.clamp((profile.displacement + 0.29) / 0.65, 0, 1);
-      colors[index * 3] = 0.055 + elevation * 0.07 + profile.ridge * 0.12;
-      colors[index * 3 + 1] = 0.08 + elevation * 0.1 + profile.ridge * 0.14;
-      colors[index * 3 + 2] = 0.16 + elevation * 0.18 + profile.ridge * 0.22;
+      elevations[index] = THREE.MathUtils.clamp((profile.displacement + 0.29) / 0.65, 0, 1);
+      ridges[index] = profile.ridge;
+      directions.set([direction.x, direction.y, direction.z], index * 3);
+      calmColors[index * 3] = 0.055 + elevations[index] * 0.07 + profile.ridge * 0.12;
+      calmColors[index * 3 + 1] = 0.08 + elevations[index] * 0.1 + profile.ridge * 0.14;
+      calmColors[index * 3 + 2] = 0.16 + elevations[index] * 0.18 + profile.ridge * 0.22;
     }
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    const surface = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+    geometry.setAttribute("color", new THREE.BufferAttribute(calmColors, 3));
+    geometry.setAttribute("aElevation", new THREE.BufferAttribute(elevations, 1));
+    geometry.setAttribute("aRidge", new THREE.BufferAttribute(ridges, 1));
+    geometry.setAttribute("aDirection", new THREE.BufferAttribute(directions, 3));
+
+    this.calmSurfaceMaterial = new THREE.MeshStandardMaterial({
       vertexColors: true,
       transparent: true,
       opacity: 0.66,
@@ -512,51 +634,223 @@ export class SphericalGraph {
       emissiveIntensity: 0.28,
       depthWrite: false,
       side: THREE.FrontSide,
-    }));
+    });
+
+    this.radiantSurfaceMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.FrontSide,
+      uniforms: {
+        uTime: { value: 0 },
+        uDeepIndigo: { value: new THREE.Color(0x08062d) },
+        uElectricBlue: { value: new THREE.Color(0x286dff) },
+        uCyan: { value: new THREE.Color(0x55ddff) },
+        uViolet: { value: new THREE.Color(0x8b50ff) },
+        uMagenta: { value: new THREE.Color(0xff52d2) },
+        uHot: { value: new THREE.Color(0xf2f7ff) },
+      },
+      vertexShader: `
+        attribute float aElevation;
+        attribute float aRidge;
+        attribute vec3 aDirection;
+        varying float vElevation;
+        varying float vRidge;
+        varying vec3 vDirection;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vElevation = aElevation;
+          vRidge = aRidge;
+          vDirection = aDirection;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uDeepIndigo;
+        uniform vec3 uElectricBlue;
+        uniform vec3 uCyan;
+        uniform vec3 uViolet;
+        uniform vec3 uMagenta;
+        uniform vec3 uHot;
+        varying float vElevation;
+        varying float vRidge;
+        varying vec3 vDirection;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+
+        float hash31(vec3 p) {
+          p = fract(p * 0.1031);
+          p += dot(p, p.yzx + 33.33);
+          return fract((p.x + p.y) * p.z);
+        }
+
+        float noise3(vec3 p) {
+          vec3 i = floor(p);
+          vec3 f = fract(p);
+          f = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(mix(hash31(i), hash31(i + vec3(1, 0, 0)), f.x),
+                mix(hash31(i + vec3(0, 1, 0)), hash31(i + vec3(1, 1, 0)), f.x), f.y),
+            mix(mix(hash31(i + vec3(0, 0, 1)), hash31(i + vec3(1, 0, 1)), f.x),
+                mix(hash31(i + vec3(0, 1, 1)), hash31(i + vec3(1, 1, 1)), f.x), f.y),
+            f.z
+          );
+        }
+
+        float fbm(vec3 p) {
+          float value = 0.0;
+          float amplitude = 0.54;
+          for (int i = 0; i < 5; i++) {
+            value += noise3(p) * amplitude;
+            p = p * 2.03 + vec3(1.7, -2.3, 0.9);
+            amplitude *= 0.48;
+          }
+          return value;
+        }
+
+        void main() {
+          vec3 direction = normalize(vDirection);
+          float flowTime = uTime * 0.035;
+          float broad = fbm(direction * 1.75 + vec3(flowTime, -flowTime * 0.7, flowTime * 0.45));
+          float fold = fbm(direction * 3.6 + vec3(broad * 2.25, -broad * 1.4, broad * 1.8));
+          float fine = fbm(direction * 7.8 + vec3(fold * 1.65));
+
+          float contourPhase = broad * 3.3 + fold * 1.15 + direction.y * 0.26 + direction.x * 0.12;
+          float contour = 1.0 - abs(fract(contourPhase) - 0.5) * 2.0;
+          float ribbons = smoothstep(0.48, 0.9, contour) * smoothstep(0.32, 0.78, fold);
+          float vein = smoothstep(0.68, 0.94, fine + contour * 0.18);
+          float reliefGlow = smoothstep(0.18, 0.72, vRidge + ribbons * 0.44);
+
+          vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
+          float facing = max(dot(normalize(vWorldNormal), viewDirection), 0.0);
+          float fresnel = pow(1.0 - facing, 2.45);
+          float light = 0.35 + max(dot(normalize(vWorldNormal), normalize(vec3(-0.36, 0.68, 0.94))), 0.0) * 0.65;
+
+          float chroma = clamp(fbm(direction * 2.55 + vec3(-1.2, 2.4, 0.6)) * 1.25 - 0.12, 0.0, 1.0);
+          vec3 coolFlow = mix(uElectricBlue, uCyan, smoothstep(0.2, 0.78, chroma));
+          vec3 warmFlow = mix(uViolet, uMagenta, smoothstep(0.34, 0.76, fold));
+          vec3 ribbonColor = mix(coolFlow, warmFlow, smoothstep(0.3, 0.7, broad + direction.x * 0.13));
+
+          vec3 color = uDeepIndigo * (0.62 + light * 0.76);
+          color += mix(uElectricBlue, uViolet, chroma) * (0.09 + vElevation * 0.18 + broad * 0.12);
+          color += ribbonColor * ribbons * (0.4 + reliefGlow * 0.46);
+          color += mix(uCyan, uMagenta, broad) * vein * (0.12 + vRidge * 0.32);
+          color += mix(uCyan, uMagenta, fold) * fresnel * (0.28 + ribbons * 0.32);
+
+          float hotCore = pow(clamp(ribbons * 0.58 + vein * 0.18 + vRidge * 0.34, 0.0, 1.0), 7.0);
+          color = mix(color, uHot * 1.18 + ribbonColor * 0.28, hotCore * 0.24);
+          float alpha = 0.71 + vElevation * 0.07 + ribbons * 0.07 + fresnel * 0.08;
+          color = clamp(color, vec3(0.0), vec3(1.35));
+          gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
+        }
+      `,
+    });
+    this.animatedMaterials.push(this.radiantSurfaceMaterial);
+    const surface = new THREE.Mesh(geometry, this.radiantSurfaceMaterial);
     surface.renderOrder = -2;
     return surface;
   }
 
   private createAtmosphere() {
     const geometry = this.createTerrainGeometry(96, 72);
-    return new THREE.Mesh(
-      geometry,
-      new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.FrontSide,
-        uniforms: { glowColor: { value: new THREE.Color(0x4166a8) } },
-        vertexShader: `
-          varying vec3 vNormal;
-          varying vec3 vWorldPosition;
-          void main() {
-            vNormal = normalize(normalMatrix * normal);
-            vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-            vWorldPosition = worldPosition.xyz;
-            gl_Position = projectionMatrix * viewMatrix * worldPosition;
-          }
-        `,
-        fragmentShader: `
-          uniform vec3 glowColor;
-          varying vec3 vNormal;
-          varying vec3 vWorldPosition;
-          void main() {
-            vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-            float rim = pow(1.0 - max(dot(vNormal, viewDirection), 0.0), 3.2);
-            float haze = pow(1.0 - max(dot(vNormal, viewDirection), 0.0), 1.4) * 0.055;
-            gl_FragColor = vec4(glowColor, rim * 0.22 + haze * 0.45);
-          }
-        `,
-      }),
-    );
+    const sharedVertexShader = `
+      varying vec3 vWorldNormal;
+      varying vec3 vWorldPosition;
+      varying vec3 vDirection;
+      void main() {
+        vWorldNormal = normalize(mat3(modelMatrix) * normal);
+        vDirection = normalize(position);
+        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+        vWorldPosition = worldPosition.xyz;
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `;
+    this.calmAtmosphereMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide,
+      uniforms: { glowColor: { value: new THREE.Color(0x4166a8) } },
+      vertexShader: sharedVertexShader,
+      fragmentShader: `
+        uniform vec3 glowColor;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        void main() {
+          vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
+          float rim = pow(1.0 - max(dot(normalize(vWorldNormal), viewDirection), 0.0), 3.2);
+          float haze = pow(1.0 - max(dot(normalize(vWorldNormal), viewDirection), 0.0), 1.4) * 0.055;
+          gl_FragColor = vec4(glowColor, clamp(rim * 0.22 + haze * 0.45, 0.0, 1.0));
+        }
+      `,
+    });
+    this.radiantAtmosphereMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.FrontSide,
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: sharedVertexShader,
+      fragmentShader: `
+        uniform float uTime;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        varying vec3 vDirection;
+        float pattern(vec3 p) {
+          return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453);
+        }
+        void main() {
+          vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
+          float rim = pow(1.0 - max(dot(normalize(vWorldNormal), viewDirection), 0.0), 2.55);
+          float hueNoise = pattern(floor(vDirection * 7.0 + uTime * 0.025));
+          vec3 cyan = vec3(0.25, 0.78, 1.0);
+          vec3 violet = vec3(0.55, 0.27, 1.0);
+          vec3 magenta = vec3(1.0, 0.38, 0.82);
+          vec3 rimColor = mix(cyan, violet, smoothstep(0.15, 0.78, vDirection.y * 0.5 + 0.5));
+          rimColor = mix(rimColor, magenta, smoothstep(0.7, 0.96, hueNoise) * 0.58);
+          float energy = pow(rim, 1.65) * 0.52 + pow(rim, 4.8) * 0.72;
+          gl_FragColor = vec4(clamp(rimColor * energy, vec3(0.0), vec3(1.35)), clamp(rim * 0.17, 0.0, 1.0));
+        }
+      `,
+    });
+    this.animatedMaterials.push(this.radiantAtmosphereMaterial);
+    const atmosphere = new THREE.Mesh(geometry, this.radiantAtmosphereMaterial);
+    atmosphere.scale.setScalar(1.012);
+    atmosphere.renderOrder = -1;
+    return atmosphere;
+  }
+
+  private registerStyledPointCloud(
+    points: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>,
+    calmColors: THREE.BufferAttribute,
+    radiantColors: THREE.BufferAttribute,
+    calmOpacity: number,
+    radiantOpacity: number,
+    calmSize: number,
+    radiantSize: number,
+  ) {
+    this.styledPointClouds.push({
+      points,
+      calmColors,
+      radiantColors,
+      calmOpacity,
+      radiantOpacity,
+      calmSize,
+      radiantSize,
+    });
+    return points;
   }
 
   private createShellDust() {
     const random = seededRandom(91);
     const count = window.innerWidth < 720 ? 6500 : 16800;
     const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
+    const radiantColors = new Float32Array(count * 3);
+    const calmColors = new Float32Array(count * 3);
     for (let index = 0; index < count; index += 1) {
       const direction = this.randomDirection(random);
       const profile = terrainProfile(direction);
@@ -566,29 +860,40 @@ export class SphericalGraph {
       positions[index * 3 + 2] = direction.z * radius;
       const mix = random();
       const elevation = THREE.MathUtils.clamp((profile.displacement + 0.29) / 0.65, 0, 1);
-      colors[index * 3] = 0.11 + mix * 0.08 + elevation * 0.12 + profile.ridge * 0.48;
-      colors[index * 3 + 1] = 0.16 + mix * 0.1 + elevation * 0.17 + profile.ridge * 0.43;
-      colors[index * 3 + 2] = 0.34 + mix * 0.13 + elevation * 0.23 + profile.ridge * 0.4;
+      const magenta = mix > 0.78;
+      const cyan = mix < 0.3;
+      const base = magenta ? [0.78, 0.23, 0.9] : cyan ? [0.2, 0.7, 1] : [0.3, 0.34, 1];
+      const brightness = 0.42 + elevation * 0.24 + profile.ridge * 0.88;
+      radiantColors[index * 3] = base[0] * brightness;
+      radiantColors[index * 3 + 1] = base[1] * brightness;
+      radiantColors[index * 3 + 2] = base[2] * brightness;
+      calmColors[index * 3] = 0.11 + mix * 0.08 + elevation * 0.12 + profile.ridge * 0.48;
+      calmColors[index * 3 + 1] = 0.16 + mix * 0.1 + elevation * 0.17 + profile.ridge * 0.43;
+      calmColors[index * 3 + 2] = 0.34 + mix * 0.13 + elevation * 0.23 + profile.ridge * 0.4;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({
-      size: 0.018,
+    const radiantAttribute = new THREE.BufferAttribute(radiantColors, 3);
+    const calmAttribute = new THREE.BufferAttribute(calmColors, 3);
+    geometry.setAttribute("color", radiantAttribute);
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
+      size: 0.02,
       map: this.glowTexture,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.82,
       vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       alphaTest: 0.01,
     }));
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.72, 0.82, 0.018, 0.02);
   }
 
   private createTerrainAccents() {
     const random = seededRandom(1312);
     const positions: number[] = [];
-    const colors: number[] = [];
+    const radiantColors: number[] = [];
+    const calmColors: number[] = [];
     const density = window.innerWidth < 720 ? 0.38 : 1;
     const addParticle = (direction: THREE.Vector3) => {
       const profile = terrainProfile(direction);
@@ -596,12 +901,21 @@ export class SphericalGraph {
       const radius = SPHERE_RADIUS + profile.displacement + spray;
       positions.push(direction.x * radius, direction.y * radius, direction.z * radius);
 
-      const white = random() > 0.975;
-      const rose = random() < 0.13 + profile.ridge * 0.28;
+      const whiteChance = random();
+      const roseChance = random();
+      const white = whiteChance > 0.955;
+      const rose = roseChance < 0.22 + profile.ridge * 0.34;
       const elevation = THREE.MathUtils.clamp((profile.displacement + 0.29) / 0.65, 0, 1);
-      const brightness = 0.2 + elevation * 0.14 + profile.ridge * 0.58 + random() * 0.18;
-      const base = white ? [0.9, 0.92, 1] : rose ? [0.78, 0.43, 0.75] : [0.38, 0.57, 0.94];
-      colors.push(base[0] * brightness, base[1] * brightness, base[2] * brightness);
+      const brightnessNoise = random();
+      const brightness = 0.28 + elevation * 0.15 + profile.ridge * 0.6 + brightnessNoise * 0.2;
+      const base = white ? [0.96, 1.0, 1.08] : rose ? [0.96, 0.3, 0.88] : [0.28, 0.72, 1.0];
+      radiantColors.push(base[0] * brightness, base[1] * brightness, base[2] * brightness);
+
+      const calmWhite = whiteChance > 0.975;
+      const calmRose = roseChance < 0.13 + profile.ridge * 0.28;
+      const calmBrightness = 0.2 + elevation * 0.14 + profile.ridge * 0.58 + brightnessNoise * 0.18;
+      const calmBase = calmWhite ? [0.9, 0.92, 1] : calmRose ? [0.78, 0.43, 0.75] : [0.38, 0.57, 0.94];
+      calmColors.push(calmBase[0] * calmBrightness, calmBase[1] * calmBrightness, calmBase[2] * calmBrightness);
     };
 
     for (const crater of TERRAIN_CRATERS) {
@@ -630,8 +944,10 @@ export class SphericalGraph {
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({
+    const radiantAttribute = new THREE.Float32BufferAttribute(radiantColors, 3);
+    const calmAttribute = new THREE.Float32BufferAttribute(calmColors, 3);
+    geometry.setAttribute("color", radiantAttribute);
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
       size: 0.034,
       map: this.glowTexture,
       transparent: true,
@@ -642,13 +958,15 @@ export class SphericalGraph {
       alphaTest: 0.012,
       toneMapped: false,
     }));
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.9, 0.9, 0.034, 0.034);
   }
 
   private createInnerDust() {
     const random = seededRandom(309);
     const count = window.innerWidth < 720 ? 500 : 1100;
     const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
+    const radiantColors = new Float32Array(count * 3);
+    const calmColors = new Float32Array(count * 3);
     for (let index = 0; index < count; index += 1) {
       const direction = this.randomDirection(random);
       const radius = SPHERE_RADIUS * Math.cbrt(random()) * 0.96;
@@ -656,29 +974,37 @@ export class SphericalGraph {
       positions[index * 3 + 1] = direction.y * radius;
       positions[index * 3 + 2] = direction.z * radius;
       const purple = random();
-      colors[index * 3] = 0.27 + purple * 0.27;
-      colors[index * 3 + 1] = 0.3 + purple * 0.19;
-      colors[index * 3 + 2] = 0.64 + purple * 0.24;
+      radiantColors[index * 3] = 0.24 + purple * 0.46;
+      radiantColors[index * 3 + 1] = 0.31 + (1 - purple) * 0.28;
+      radiantColors[index * 3 + 2] = 0.78 + purple * 0.32;
+      calmColors[index * 3] = 0.27 + purple * 0.27;
+      calmColors[index * 3 + 1] = 0.3 + purple * 0.19;
+      calmColors[index * 3 + 2] = 0.64 + purple * 0.24;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({
+    const radiantAttribute = new THREE.BufferAttribute(radiantColors, 3);
+    const calmAttribute = new THREE.BufferAttribute(calmColors, 3);
+    geometry.setAttribute("color", radiantAttribute);
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
       size: 0.019,
       map: this.glowTexture,
       transparent: true,
-      opacity: 0.41,
+      opacity: 0.54,
       vertexColors: true,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
+      alphaTest: 0.01,
     }));
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.41, 0.54, 0.019, 0.019);
   }
 
   private createSparkleShell() {
     const random = seededRandom(777);
     const count = window.innerWidth < 720 ? 900 : 2800;
     const positions = new Float32Array(count * 3);
-    const colors = new Float32Array(count * 3);
+    const radiantColors = new Float32Array(count * 3);
+    const calmColors = new Float32Array(count * 3);
     for (let index = 0; index < count; index += 1) {
       const direction = this.randomDirection(random);
       const profile = terrainProfile(direction);
@@ -686,16 +1012,24 @@ export class SphericalGraph {
       positions[index * 3] = direction.x * radius;
       positions[index * 3 + 1] = direction.y * radius;
       positions[index * 3 + 2] = direction.z * radius;
-      const magenta = random() > 0.82;
-      const brightness = (0.48 + profile.ridge * 0.34) + random() * 0.18;
-      colors[index * 3] = (magenta ? 0.76 : 0.52) * brightness;
-      colors[index * 3 + 1] = (magenta ? 0.5 : 0.66) * brightness;
-      colors[index * 3 + 2] = (magenta ? 0.74 : 0.92) * brightness;
+      const magenta = random() > 0.74;
+      const white = random() > 0.95;
+      const brightness = (0.58 + profile.ridge * 0.48) + random() * 0.3;
+      const base = white ? [0.96, 1.0, 1.08] : magenta ? [0.96, 0.34, 0.86] : [0.32, 0.76, 1.0];
+      radiantColors[index * 3] = base[0] * brightness;
+      radiantColors[index * 3 + 1] = base[1] * brightness;
+      radiantColors[index * 3 + 2] = base[2] * brightness;
+      const calmBrightness = (0.48 + profile.ridge * 0.34) + Math.max(0, brightness - 0.58 - profile.ridge * 0.48) * 0.6;
+      calmColors[index * 3] = (magenta ? 0.76 : 0.52) * calmBrightness;
+      calmColors[index * 3 + 1] = (magenta ? 0.5 : 0.66) * calmBrightness;
+      calmColors[index * 3 + 2] = (magenta ? 0.74 : 0.92) * calmBrightness;
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({
+    const radiantAttribute = new THREE.BufferAttribute(radiantColors, 3);
+    const calmAttribute = new THREE.BufferAttribute(calmColors, 3);
+    geometry.setAttribute("color", radiantAttribute);
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({
       size: 0.032,
       map: this.glowTexture,
       transparent: true,
@@ -706,6 +1040,141 @@ export class SphericalGraph {
       alphaTest: 0.015,
       toneMapped: false,
     }));
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.9, 0.9, 0.032, 0.032);
+  }
+
+  private createOrbitingMotes() {
+    const random = seededRandom(2468);
+    const count = window.innerWidth < 720 ? 760 : 2200;
+    const positions = new Float32Array(count * 3);
+    const radiantColors = new Float32Array(count * 3);
+    const calmColors = new Float32Array(count * 3);
+    const phases = new Float32Array(count);
+    const speeds = new Float32Array(count);
+    const drifts = new Float32Array(count);
+    const lifts = new Float32Array(count);
+    const sizes = new Float32Array(count);
+
+    for (let index = 0; index < count; index += 1) {
+      const direction = this.randomDirection(random);
+      const profile = terrainProfile(direction);
+      const altitude = -0.012 + Math.pow(random(), 1.7) * (0.16 + profile.ridge * 0.14);
+      const radius = SPHERE_RADIUS + profile.displacement + altitude;
+      positions[index * 3] = direction.x * radius;
+      positions[index * 3 + 1] = direction.y * radius;
+      positions[index * 3 + 2] = direction.z * radius;
+
+      const palette = random();
+      const brightness = 0.58 + random() * 0.5 + profile.ridge * 0.32;
+      const radiantBase = palette < 0.38
+        ? [0.3, 0.84, 1.08]
+        : palette < 0.73
+          ? [0.64, 0.38, 1.04]
+          : palette < 0.94
+            ? [1.02, 0.34, 0.86]
+            : [1.08, 1.12, 1.2];
+      const calmBase = palette < 0.5 ? [0.48, 0.64, 0.94] : palette < 0.88 ? [0.62, 0.55, 0.9] : [0.82, 0.75, 0.9];
+      radiantColors[index * 3] = radiantBase[0] * brightness;
+      radiantColors[index * 3 + 1] = radiantBase[1] * brightness;
+      radiantColors[index * 3 + 2] = radiantBase[2] * brightness;
+      calmColors[index * 3] = calmBase[0] * brightness * 0.72;
+      calmColors[index * 3 + 1] = calmBase[1] * brightness * 0.72;
+      calmColors[index * 3 + 2] = calmBase[2] * brightness * 0.72;
+
+      phases[index] = random() * Math.PI * 2;
+      speeds[index] = 0.34 + random() * 0.72;
+      drifts[index] = 0.018 + Math.pow(random(), 1.6) * 0.075;
+      lifts[index] = 0.012 + random() * 0.052;
+      sizes[index] = 0.62 + Math.pow(random(), 2.2) * 1.42;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    this.orbitingMoteRadiantColors = new THREE.BufferAttribute(radiantColors, 3);
+    this.orbitingMoteCalmColors = new THREE.BufferAttribute(calmColors, 3);
+    geometry.setAttribute("color", this.orbitingMoteRadiantColors);
+    geometry.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
+    geometry.setAttribute("aSpeed", new THREE.BufferAttribute(speeds, 1));
+    geometry.setAttribute("aDrift", new THREE.BufferAttribute(drifts, 1));
+    geometry.setAttribute("aLift", new THREE.BufferAttribute(lifts, 1));
+    geometry.setAttribute("aSize", new THREE.BufferAttribute(sizes, 1));
+
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.AdditiveBlending,
+      vertexColors: true,
+      toneMapped: false,
+      uniforms: {
+        uTime: { value: 0 },
+        uOpacity: { value: 0.88 },
+        uPointSize: { value: 0.031 },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.8) },
+        uMotionScale: { value: 1 },
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uPointSize;
+        uniform float uPixelRatio;
+        uniform float uMotionScale;
+        attribute float aPhase;
+        attribute float aSpeed;
+        attribute float aDrift;
+        attribute float aLift;
+        attribute float aSize;
+        varying vec3 vColor;
+        varying float vFacing;
+        varying float vTwinkle;
+
+        void main() {
+          vec3 direction = normalize(position);
+          vec3 guide = abs(direction.y) > 0.86 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0);
+          vec3 tangent = normalize(cross(direction, guide));
+          vec3 bitangent = normalize(cross(direction, tangent));
+          float time = uTime * aSpeed + aPhase;
+          float primary = sin(time);
+          float secondary = cos(time * 0.73 + aPhase * 1.71);
+          float radial = sin(time * 0.57 + aPhase * 0.43);
+          vec3 displaced = position
+            + tangent * primary * aDrift * uMotionScale
+            + bitangent * secondary * aDrift * 0.58 * uMotionScale
+            + direction * radial * aLift * uMotionScale;
+
+          vec4 worldPosition = modelMatrix * vec4(displaced, 1.0);
+          vec3 worldDirection = normalize(mat3(modelMatrix) * direction);
+          vec3 viewDirection = normalize(cameraPosition - worldPosition.xyz);
+          vFacing = smoothstep(-0.2, 0.24, dot(worldDirection, viewDirection));
+          vTwinkle = 0.72 + sin(time * 1.43 + aPhase * 2.2) * 0.28;
+          vColor = color;
+
+          vec4 viewPosition = viewMatrix * worldPosition;
+          gl_Position = projectionMatrix * viewPosition;
+          gl_PointSize = max(1.0, uPointSize * aSize * uPixelRatio * (300.0 / max(1.0, -viewPosition.z)));
+        }
+      `,
+      fragmentShader: `
+        uniform float uOpacity;
+        varying vec3 vColor;
+        varying float vFacing;
+        varying float vTwinkle;
+
+        void main() {
+          vec2 centered = gl_PointCoord - vec2(0.5);
+          float distanceToCenter = length(centered) * 2.0;
+          float halo = 1.0 - smoothstep(0.12, 1.0, distanceToCenter);
+          float core = 1.0 - smoothstep(0.0, 0.34, distanceToCenter);
+          float alpha = (halo * 0.7 + core * 0.3) * uOpacity * vFacing * vTwinkle;
+          if (alpha < 0.018) discard;
+          vec3 color = vColor * (0.62 + core * 0.74);
+          gl_FragColor = vec4(clamp(color, vec3(0.0), vec3(1.4)), alpha);
+        }
+      `,
+    });
+    this.animatedMaterials.push(material);
+    const points = new THREE.Points(geometry, material);
+    points.renderOrder = 1;
+    return points;
   }
 
   private createAmbientNetwork() {
@@ -743,6 +1212,7 @@ export class SphericalGraph {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
+      alphaTest: 0.01,
     })));
 
     const accentGeometry = new THREE.BufferGeometry();
@@ -829,15 +1299,24 @@ export class SphericalGraph {
     return lines;
   }
 
-  private createNodeVisual(node: GraphNode, position: THREE.Vector3, colorValue: number, cluster: boolean, label: boolean): NodeVisual {
+  private createNodeVisual(
+    node: GraphNode,
+    position: THREE.Vector3,
+    radiantColorValue: number,
+    calmColorValue: number,
+    cluster: boolean,
+    label: boolean,
+  ): NodeVisual {
     const group = new THREE.Group();
     group.position.copy(position);
     const degree = node.kind === "cluster" ? node.noteCount ?? 1 : this.degrees.get(node.id) ?? 0;
     const radius = cluster
       ? 0.11 + Math.min(degree, 28) * 0.0021
       : 0.03 + Math.sqrt(Math.min(degree, 16)) * 0.018;
-    const color = new THREE.Color(colorValue);
-    const innerColor = color.clone().lerp(new THREE.Color(0xf0f4fb), cluster ? 0.76 : 0.64);
+    const radiantColor = new THREE.Color(radiantColorValue);
+    const calmColor = new THREE.Color(calmColorValue);
+    const color = (this.sphereStyle === "radiant" ? radiantColor : calmColor).clone();
+    const innerColor = color.clone().lerp(NODE_HIGHLIGHT_COLOR, cluster ? 0.76 : 0.64);
     const core = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 24, 18),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 }),
@@ -854,6 +1333,7 @@ export class SphericalGraph {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
+      alphaTest: 0.012,
     }));
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
       map: this.glowTexture,
@@ -863,6 +1343,7 @@ export class SphericalGraph {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       toneMapped: false,
+      alphaTest: 0.012,
     }));
     marker.scale.setScalar(radius * (cluster ? 5.6 : 5));
     const glowSize = radius * (cluster ? 6.4 : 5.8);
@@ -887,10 +1368,22 @@ export class SphericalGraph {
       group.add(labelObject);
     }
 
-    return { node, group, hit, core, inner, marker, glow, label: labelObject, baseScale: cluster ? 1.06 : 1 };
+    return {
+      node,
+      group,
+      hit,
+      core,
+      inner,
+      marker,
+      glow,
+      label: labelObject,
+      baseScale: cluster ? 1.06 : 1,
+      calmColor,
+      radiantColor,
+    };
   }
 
-  private createHubRings(position: THREE.Vector3, colorValue: number) {
+  private createHubRings(position: THREE.Vector3, radiantColorValue: number, calmColorValue: number) {
     const group = new THREE.Group();
     group.position.copy(position);
     group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), position.clone().normalize());
@@ -899,15 +1392,21 @@ export class SphericalGraph {
         const angle = (pointIndex / 72) * Math.PI * 2;
         return new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0);
       });
+      const material = new THREE.LineBasicMaterial({
+        color: this.sphereStyle === "radiant" ? radiantColorValue : calmColorValue,
+        transparent: true,
+        opacity: 0.48 - index * 0.085,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      this.styledLineMaterials.push({
+        material,
+        calmColor: new THREE.Color(calmColorValue),
+        radiantColor: new THREE.Color(radiantColorValue),
+      });
       const ring = new THREE.LineLoop(
         new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({
-          color: colorValue,
-          transparent: true,
-          opacity: 0.48 - index * 0.085,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        }),
+        material,
       );
       group.add(ring);
     });
@@ -916,9 +1415,21 @@ export class SphericalGraph {
       const angle = (index / 20) * Math.PI * 2;
       spokePositions.push(0, 0, 0, Math.cos(angle) * 0.64, Math.sin(angle) * 0.64, 0);
     }
+    const spokeMaterial = new THREE.LineBasicMaterial({
+      color: this.sphereStyle === "radiant" ? radiantColorValue : calmColorValue,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.styledLineMaterials.push({
+      material: spokeMaterial,
+      calmColor: new THREE.Color(calmColorValue),
+      radiantColor: new THREE.Color(radiantColorValue),
+    });
     const spokes = new THREE.LineSegments(
       new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(spokePositions, 3)),
-      new THREE.LineBasicMaterial({ color: colorValue, transparent: true, opacity: 0.18, depthWrite: false, blending: THREE.AdditiveBlending }),
+      spokeMaterial,
     );
     group.add(spokes);
     return group;
@@ -959,11 +1470,15 @@ export class SphericalGraph {
       const depth = 0.24 + THREE.MathUtils.smoothstep(facing, -0.42, 0.38) * 0.76;
       const visibility = (matches ? 1 : 0.075) * depth;
       const isCluster = node.kind === "cluster";
+      const radiant = this.sphereStyle === "radiant";
+      const coreEnergy = radiant ? 1 : 0.9;
+      const markerEnergy = radiant ? 1 : 0.84;
+      const glowEnergy = radiant ? 1 : 0.68;
 
-      core.material.opacity = visibility * (isCluster ? 0.92 : 0.78);
-      inner.material.opacity = visibility * (isCluster ? 0.98 : 0.88);
-      (marker.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 1 : isCluster ? 0.88 : 0.72);
-      (glow.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 0.78 : isCluster ? 0.5 : 0.3);
+      core.material.opacity = visibility * (isCluster ? 0.92 : 0.78) * coreEnergy;
+      inner.material.opacity = visibility * (isCluster ? 0.98 : 0.88) * coreEnergy;
+      (marker.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 1 : isCluster ? 0.88 : 0.72) * markerEnergy;
+      (glow.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 0.78 : isCluster ? 0.5 : 0.3) * glowEnergy;
 
       const pulse = selected && !this.reducedMotion ? 1 + Math.sin(elapsed * 2.4) * 0.022 : 1;
       const targetScale = ((group.userData.targetScale as number | undefined) ?? visual.baseScale) * pulse;
@@ -1065,11 +1580,25 @@ export class SphericalGraph {
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
     this.labelRenderer.setSize(width, height);
+    if (this.orbitingMotes) {
+      this.orbitingMotes.material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 1.8);
+    }
   }
 
   private animate = () => {
     const delta = Math.min(this.clock.getDelta(), 0.05);
     const elapsed = this.clock.elapsedTime;
+    const materialTime = this.reducedMotion ? 0 : elapsed;
+    this.animatedMaterials.forEach((material) => {
+      const timeUniform = material.uniforms.uTime;
+      if (timeUniform) timeUniform.value = materialTime;
+    });
+    if (!this.reducedMotion && this.orbitingMotes) {
+      const motionScale = this.sphereStyle === "radiant" ? 1 : 0.58;
+      this.orbitingMotes.rotation.y += delta * 0.011 * motionScale;
+      this.orbitingMotes.rotation.x = Math.sin(elapsed * 0.19) * 0.009 * motionScale;
+      this.orbitingMotes.rotation.z = Math.cos(elapsed * 0.14) * 0.006 * motionScale;
+    }
     if (!this.dragging) {
       if (this.focusing) {
         this.focusElapsed = Math.min(this.focusElapsed + delta, this.focusDuration);
@@ -1108,6 +1637,7 @@ export class SphericalGraph {
   private clearNetwork() {
     this.nodeVisuals.length = 0;
     this.hitMeshes.length = 0;
+    this.styledLineMaterials.length = 0;
     this.networkRoot.traverse((object) => {
       if (object instanceof CSS2DObject) object.element.remove();
       const mesh = object as THREE.Mesh;
