@@ -3,7 +3,7 @@ name: Publish plugin release assets
 on:
   workflow_dispatch:
   schedule:
-    - cron: "2 * * * *"
+    - cron: "5 * * * *"
 
 permissions:
   contents: write
@@ -30,7 +30,9 @@ jobs:
       - name: Read release version
         id: manifest
         shell: bash
-        run: echo "version=$(node -p \"require('./manifest.json').version\")" >> "$GITHUB_OUTPUT"
+        run: |
+          PLUGIN_RELEASE_VERSION="$(node -p "require('./manifest.json').version")"
+          echo "version=$PLUGIN_RELEASE_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Upload release assets
         env:
