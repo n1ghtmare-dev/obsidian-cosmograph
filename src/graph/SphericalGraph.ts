@@ -415,8 +415,8 @@ export class SphericalGraph {
       const color = radiant ? visual.radiantColor : visual.calmColor;
       visual.core.material.color.copy(color);
       visual.inner.material.color.copy(color).lerp(NODE_HIGHLIGHT_COLOR, visual.node.kind === "cluster" ? 0.76 : 0.64);
-      (visual.marker.material as THREE.SpriteMaterial).color.copy(color);
-      (visual.glow.material as THREE.SpriteMaterial).color.copy(color);
+      visual.marker.material.color.copy(color);
+      visual.glow.material.color.copy(color);
     });
     this.styledLineMaterials.forEach((entry) => {
       entry.material.color.copy(radiant ? entry.radiantColor : entry.calmColor);
@@ -1271,7 +1271,7 @@ export class SphericalGraph {
     orderedGroups.forEach(([groupName, notes], index) => {
       const cluster = clusters[index];
       const clusterPosition = positions.get(cluster.id)!;
-      const color = new THREE.Color(colors.get(groupName)!);
+      const color = new THREE.Color(colors.get(groupName));
       notes.forEach((note) => addLine(clusterPosition, positions.get(note.id)!, color, color));
     });
 
@@ -1282,7 +1282,7 @@ export class SphericalGraph {
       const sourceNode = nodeById.get(edge.source);
       const targetNode = nodeById.get(edge.target);
       if (!source || !target || !sourceNode || !targetNode) return;
-      addLine(source, target, new THREE.Color(colors.get(sourceNode.group)!), new THREE.Color(colors.get(targetNode.group)!));
+      addLine(source, target, new THREE.Color(colors.get(sourceNode.group)), new THREE.Color(colors.get(targetNode.group)));
     });
 
     const geometry = new THREE.BufferGeometry();
@@ -1477,8 +1477,8 @@ export class SphericalGraph {
 
       core.material.opacity = visibility * (isCluster ? 0.92 : 0.78) * coreEnergy;
       inner.material.opacity = visibility * (isCluster ? 0.98 : 0.88) * coreEnergy;
-      (marker.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 1 : isCluster ? 0.88 : 0.72) * markerEnergy;
-      (glow.material as THREE.SpriteMaterial).opacity = visibility * (selected || hovered ? 0.78 : isCluster ? 0.5 : 0.3) * glowEnergy;
+      marker.material.opacity = visibility * (selected || hovered ? 1 : isCluster ? 0.88 : 0.72) * markerEnergy;
+      glow.material.opacity = visibility * (selected || hovered ? 0.78 : isCluster ? 0.5 : 0.3) * glowEnergy;
 
       const pulse = selected && !this.reducedMotion ? 1 + Math.sin(elapsed * 2.4) * 0.022 : 1;
       const targetScale = ((group.userData.targetScale as number | undefined) ?? visual.baseScale) * pulse;
@@ -1616,7 +1616,7 @@ export class SphericalGraph {
     this.updateNodeVisuals(elapsed, delta);
     this.composer.render();
     this.labelRenderer.render(this.scene, this.camera);
-    this.animationFrame = requestAnimationFrame(this.animate);
+    this.animationFrame = window.requestAnimationFrame(this.animate);
   };
 
   private fibonacciDirection(index: number, count: number) {

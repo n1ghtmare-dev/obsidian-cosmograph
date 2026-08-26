@@ -3,7 +3,7 @@ import { CosmographView, VIEW_TYPE_COSMOGRAPH } from "./CosmographView";
 import { CosmographSettingTab, DEFAULT_SETTINGS, type CosmographSettings, type SettingsController } from "./settings";
 
 export default class CosmographPlugin extends Plugin implements SettingsController {
-  settings: CosmographSettings = { ...DEFAULT_SETTINGS };
+  preferences: CosmographSettings = { ...DEFAULT_SETTINGS };
 
   async onload() {
     await this.loadSettings();
@@ -28,10 +28,6 @@ export default class CosmographPlugin extends Plugin implements SettingsControll
     this.addSettingTab(new CosmographSettingTab(this.app, this));
   }
 
-  onunload() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_COSMOGRAPH);
-  }
-
   async activateView() {
     let leaf: WorkspaceLeaf;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOGRAPH)[0];
@@ -45,11 +41,11 @@ export default class CosmographPlugin extends Plugin implements SettingsControll
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<CosmographSettings> | null);
+    this.preferences = { ...DEFAULT_SETTINGS, ...await this.loadData() as Partial<CosmographSettings> | null };
   }
 
   async saveSettings() {
-    await this.saveData(this.settings);
+    await this.saveData(this.preferences);
   }
 
   applySettingsToViews() {

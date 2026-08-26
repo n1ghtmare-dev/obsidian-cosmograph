@@ -14,7 +14,7 @@ export const DEFAULT_SETTINGS: CosmographSettings = {
 };
 
 export type SettingsController = Plugin & {
-  settings: CosmographSettings;
+  preferences: CosmographSettings;
   saveSettings(): Promise<void>;
   applySettingsToViews(): void;
 };
@@ -34,9 +34,9 @@ export class CosmographSettingTab extends PluginSettingTab {
       .addDropdown((dropdown) => dropdown
         .addOption("radiant", "Radiant")
         .addOption("calm", "Calm")
-        .setValue(this.controller.settings.sphereStyle)
+        .setValue(this.controller.preferences.sphereStyle)
         .onChange(async (value) => {
-          this.controller.settings.sphereStyle = value as SphereStyle;
+          this.controller.preferences.sphereStyle = value as SphereStyle;
           await this.controller.saveSettings();
           this.controller.applySettingsToViews();
         }));
@@ -45,9 +45,9 @@ export class CosmographSettingTab extends PluginSettingTab {
       .setName("Open notes in a new tab")
       .setDesc("Keep CosmoGraph visible when opening a note from the details panel.")
       .addToggle((toggle) => toggle
-        .setValue(this.controller.settings.openNotesInNewTab)
+        .setValue(this.controller.preferences.openNotesInNewTab)
         .onChange(async (value) => {
-          this.controller.settings.openNotesInNewTab = value;
+          this.controller.preferences.openNotesInNewTab = value;
           await this.controller.saveSettings();
         }));
 
@@ -55,9 +55,9 @@ export class CosmographSettingTab extends PluginSettingTab {
       .setName("Refresh automatically")
       .setDesc("Rebuild the graph when notes or resolved links change.")
       .addToggle((toggle) => toggle
-        .setValue(this.controller.settings.refreshAutomatically)
+        .setValue(this.controller.preferences.refreshAutomatically)
         .onChange(async (value) => {
-          this.controller.settings.refreshAutomatically = value;
+          this.controller.preferences.refreshAutomatically = value;
           await this.controller.saveSettings();
         }));
   }

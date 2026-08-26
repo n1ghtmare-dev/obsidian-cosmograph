@@ -1,7 +1,7 @@
 {
   "name": "obsidian-cosmograph",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Immersive 3D spherical knowledge graph for Obsidian vaults.",
   "license": "MIT",
   "author": "n1ghtmare-dev",
@@ -29,6 +29,7 @@
     "build": "npm run build:web && npm run build:plugin",
     "build:web": "tsc -p tsconfig.json && vite build",
     "build:plugin": "tsc -p tsconfig.plugin.json && node esbuild.config.mjs production",
+    "lint": "eslint src manifest.json",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -38,6 +39,8 @@
     "@types/node": "^24.0.0",
     "@types/three": "^0.179.0",
     "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.2",
     "obsidian": "latest",
     "typescript": "^5.9.2",
     "vite": "^7.1.3"

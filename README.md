@@ -75,7 +75,7 @@ npm run build:plugin
 The build creates `main.js` in the repository root. Copy these files into your vault:
 
 ```text
-Your Vault/.obsidian/plugins/cosmograph-3d/
+Your Vault/.obsidian/plugins/cosmograph/
 ├── main.js
 └── manifest.json
 ```
@@ -151,7 +151,7 @@ The renderer remains separate from the Obsidian API, so the web prototype can co
 
 ## Plugin roadmap
 
-The native **CosmoGraph 3D** plugin uses the plugin ID `cosmograph-3d`. The next milestones are:
+The native **CosmoGraph 3D** plugin uses the plugin ID `cosmograph`. The next milestones are:
 
 - Add controls for clusters, labels, colors, terrain, and performance.
 - Optimize rendering for large vaults and lower-powered devices.

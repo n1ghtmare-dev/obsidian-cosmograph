@@ -231,7 +231,7 @@ graph.setHandlers((node) => showNode(node, false), (node, x, y) => {
   tooltip.hidden = false;
 });
 
-fileInput.addEventListener("change", async () => {
+async function openSelectedVault() {
   if (!fileInput.files?.length) return;
   loadingState.hidden = false;
   dockStatus.textContent = "Читаем заметки";
@@ -244,7 +244,9 @@ fileInput.addEventListener("change", async () => {
     loadingState.hidden = true;
     fileInput.value = "";
   }
-});
+}
+
+fileInput.addEventListener("change", () => void openSelectedVault());
 
 searchInput.addEventListener("input", () => graph.setSearch(searchInput.value));
 panelClose.addEventListener("click", () => showNode(null));

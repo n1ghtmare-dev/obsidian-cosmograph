@@ -148,19 +148,20 @@ export class CosmographView extends ItemView {
 
   async onOpen() {
     this.contentEl.empty();
-    this.contentEl.style.padding = "0";
-    this.contentEl.style.overflow = "hidden";
+    this.contentEl.addClass("cosmograph-content");
 
-    const host = this.contentEl.createDiv();
-    host.style.width = "100%";
-    host.style.height = "100%";
+    const host = this.contentEl.createDiv({ cls: "cosmograph-host" });
     this.shadow = host.attachShadow({ mode: "open" });
-    const style = document.createElement("style");
-    style.textContent = `${cosmographStyles}\n${PLUGIN_STYLES}`;
-    const mount = document.createElement("div");
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(`${cosmographStyles}\n${PLUGIN_STYLES}`);
+    this.shadow.adoptedStyleSheets = [sheet];
+    const mount = createDiv();
     mount.id = "app";
-    mount.innerHTML = viewMarkup();
-    this.shadow.append(style, mount);
+    const parsedMarkup = new DOMParser().parseFromString(viewMarkup(), "text/html");
+    const shell = parsedMarkup.body.firstElementChild;
+    if (!shell) throw new Error("CosmoGraph UI markup could not be created.");
+    mount.append(shell);
+    this.shadow.append(mount);
     this.shell = this.find<HTMLElement>(".app-shell");
 
     const canvas = this.find<HTMLCanvasElement>("#graph-canvas");
@@ -192,13 +193,12 @@ export class CosmographView extends ItemView {
     this.graph = null;
     this.shadow = null;
     this.shell = null;
-    this.contentEl.style.removeProperty("padding");
-    this.contentEl.style.removeProperty("overflow");
+    this.contentEl.removeClass("cosmograph-content");
     this.contentEl.empty();
   }
 
   applySettings() {
-    this.setSphereStyle(this.plugin.settings.sphereStyle, false);
+    this.setSphereStyle(this.plugin.preferences.sphereStyle, false);
   }
 
   refreshGraph() {
@@ -221,7 +221,7 @@ export class CosmographView extends ItemView {
   }
 
   private scheduleRefresh() {
-    if (!this.plugin.settings.refreshAutomatically) return;
+    if (!this.plugin.preferences.refreshAutomatically) return;
     if (this.refreshTimer !== null) window.clearTimeout(this.refreshTimer);
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
@@ -358,7 +358,7 @@ export class CosmographView extends ItemView {
     if (node.kind === "cluster") return;
     const file = this.app.vault.getAbstractFileByPath(node.path);
     if (!(file instanceof TFile)) return;
-    const leaf = this.app.workspace.getLeaf(this.plugin.settings.openNotesInNewTab ? "tab" : false);
+    const leaf = this.app.workspace.getLeaf(this.plugin.preferences.openNotesInNewTab ? "tab" : false);
     await leaf.openFile(file);
   }
 
@@ -371,7 +371,7 @@ export class CosmographView extends ItemView {
       button.setAttribute("aria-pressed", String(active));
     });
     if (persist) {
-      this.plugin.settings.sphereStyle = style;
+      this.plugin.preferences.sphereStyle = style;
       void this.plugin.saveSettings();
     }
   }

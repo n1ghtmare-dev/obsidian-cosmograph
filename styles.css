@@ -1,0 +1,9 @@
+.cosmograph-content {
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.cosmograph-host {
+  width: 100%;
+  height: 100%;
+}
