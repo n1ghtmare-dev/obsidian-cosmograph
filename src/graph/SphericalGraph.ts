@@ -381,6 +381,11 @@ export class SphericalGraph {
     this.onHover = onHover;
   }
 
+  setLabelsVisible(visible: boolean) {
+    this.labelRenderer.domElement.classList.toggle("is-hidden", !visible);
+    this.labelRenderer.domElement.setAttribute("aria-hidden", String(!visible));
+  }
+
   getPrimaryNode() {
     return this.primaryNode;
   }

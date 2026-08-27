@@ -60,6 +60,20 @@ function viewMarkup() {
     <main class="app-shell app-shell--obsidian">
       <button class="immersive-toggle" id="immersive-toggle" type="button" aria-pressed="false" aria-label="Скрыть интерфейс" title="Скрыть интерфейс">Сцена</button>
 
+      <div class="scene-settings" id="scene-settings">
+        <button class="scene-settings__trigger" id="scene-settings-trigger" type="button" aria-label="Настройки сцены" aria-controls="scene-settings-menu" aria-expanded="false" title="Настройки сцены"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
+        <div class="scene-settings__menu" id="scene-settings-menu" role="dialog" aria-label="Настройки сцены" hidden>
+          <div class="scene-settings__heading">
+            <span>Настройки сцены</span>
+            <small>Отображение</small>
+          </div>
+          <div class="scene-settings__row">
+            <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Названия заметок на сфере</small></span>
+            <button class="scene-switch" id="labels-toggle" type="button" role="switch" aria-checked="true" aria-label="Показывать подписи узлов"><span></span></button>
+          </div>
+        </div>
+      </div>
+
       <header class="topbar">
         <div class="brand" aria-label="CosmoGraph">
           <span class="brand-mark" aria-hidden="true"><span></span></span>
@@ -199,6 +213,7 @@ export class CosmographView extends ItemView {
 
   applySettings() {
     this.setSphereStyle(this.plugin.preferences.sphereStyle, false);
+    this.setLabelsVisible(this.plugin.preferences.showNodeLabels, false);
   }
 
   refreshGraph() {
@@ -232,6 +247,10 @@ export class CosmographView extends ItemView {
   private bindInterface() {
     const searchInput = this.find<HTMLInputElement>("#search-input");
     const immersiveToggle = this.find<HTMLButtonElement>("#immersive-toggle");
+    const sceneSettings = this.find<HTMLElement>("#scene-settings");
+    const sceneSettingsTrigger = this.find<HTMLButtonElement>("#scene-settings-trigger");
+    const sceneSettingsMenu = this.find<HTMLElement>("#scene-settings-menu");
+    const labelsToggle = this.find<HTMLButtonElement>("#labels-toggle");
     const sphereStyleButtons = this.findAll<HTMLButtonElement>("[data-sphere-style]");
 
     searchInput.addEventListener("input", () => this.graph?.setSearch(searchInput.value));
@@ -243,12 +262,28 @@ export class CosmographView extends ItemView {
       if (target) this.graph?.focusNode(target.id);
     });
     immersiveToggle.addEventListener("click", () => this.setImmersive(!this.isImmersive));
+    sceneSettingsTrigger.addEventListener("click", () => this.setSettingsOpen(sceneSettingsMenu.hidden));
+    labelsToggle.addEventListener("click", () => {
+      this.setLabelsVisible(labelsToggle.getAttribute("aria-checked") !== "true", true);
+    });
+    this.shadow?.addEventListener("pointerdown", (event) => {
+      if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
+        this.setSettingsOpen(false);
+      }
+    });
     sphereStyleButtons.forEach((button) => button.addEventListener("click", () => {
       this.setSphereStyle(button.dataset.sphereStyle as SphereStyle, true);
     }));
     this.shadow?.addEventListener("keydown", (event) => {
       const keyboardEvent = event as KeyboardEvent;
-      if (keyboardEvent.key === "Escape" && this.isImmersive) this.setImmersive(false);
+      if (keyboardEvent.key === "Escape") {
+        if (!sceneSettingsMenu.hidden) {
+          this.setSettingsOpen(false);
+          sceneSettingsTrigger.focus();
+        } else if (this.isImmersive) {
+          this.setImmersive(false);
+        }
+      }
       if ((keyboardEvent.metaKey || keyboardEvent.ctrlKey) && keyboardEvent.key.toLowerCase() === "f") {
         keyboardEvent.preventDefault();
         searchInput.focus();
@@ -376,6 +411,25 @@ export class CosmographView extends ItemView {
     }
   }
 
+  private setSettingsOpen(open: boolean) {
+    const menu = this.find<HTMLElement>("#scene-settings-menu");
+    const trigger = this.find<HTMLButtonElement>("#scene-settings-trigger");
+    menu.hidden = !open;
+    trigger.classList.toggle("is-active", open);
+    trigger.setAttribute("aria-expanded", String(open));
+  }
+
+  private setLabelsVisible(visible: boolean, persist: boolean) {
+    this.graph?.setLabelsVisible(visible);
+    const toggle = this.find<HTMLButtonElement>("#labels-toggle");
+    toggle.setAttribute("aria-checked", String(visible));
+    toggle.title = visible ? "Скрыть подписи узлов" : "Показать подписи узлов";
+    if (persist) {
+      this.plugin.preferences.showNodeLabels = visible;
+      void this.plugin.saveSettings();
+    }
+  }
+
   private setImmersive(next: boolean) {
     this.isImmersive = next;
     this.shell?.classList.toggle("is-immersive", next);
@@ -384,7 +438,10 @@ export class CosmographView extends ItemView {
     button.setAttribute("aria-label", next ? "Показать интерфейс" : "Скрыть интерфейс");
     button.title = next ? "Показать интерфейс" : "Скрыть интерфейс";
     button.textContent = next ? "UI" : "Сцена";
-    if (next) this.find<HTMLElement>("#node-tooltip").hidden = true;
+    if (next) {
+      this.find<HTMLElement>("#node-tooltip").hidden = true;
+      this.setSettingsOpen(false);
+    }
   }
 
   private find<T extends Element>(selector: string) {

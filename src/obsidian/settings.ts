@@ -3,12 +3,14 @@ import type { SphereStyle } from "../graph/SphericalGraph";
 
 export type CosmographSettings = {
   sphereStyle: SphereStyle;
+  showNodeLabels: boolean;
   openNotesInNewTab: boolean;
   refreshAutomatically: boolean;
 };
 
 export const DEFAULT_SETTINGS: CosmographSettings = {
   sphereStyle: "radiant",
+  showNodeLabels: true,
   openNotesInNewTab: true,
   refreshAutomatically: true,
 };
@@ -37,6 +39,17 @@ export class CosmographSettingTab extends PluginSettingTab {
         .setValue(this.controller.preferences.sphereStyle)
         .onChange(async (value) => {
           this.controller.preferences.sphereStyle = value as SphereStyle;
+          await this.controller.saveSettings();
+          this.controller.applySettingsToViews();
+        }));
+
+    new Setting(containerEl)
+      .setName("Show node labels")
+      .setDesc("Display note and cluster names directly on the sphere.")
+      .addToggle((toggle) => toggle
+        .setValue(this.controller.preferences.showNodeLabels)
+        .onChange(async (value) => {
+          this.controller.preferences.showNodeLabels = value;
           await this.controller.saveSettings();
           this.controller.applySettingsToViews();
         }));

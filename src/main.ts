@@ -18,6 +18,28 @@ app.innerHTML = `
       title="Скрыть интерфейс"
     >Сцена</button>
 
+    <div class="scene-settings" id="scene-settings">
+      <button
+        class="scene-settings__trigger"
+        id="scene-settings-trigger"
+        type="button"
+        aria-label="Настройки сцены"
+        aria-controls="scene-settings-menu"
+        aria-expanded="false"
+        title="Настройки сцены"
+      ><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
+      <div class="scene-settings__menu" id="scene-settings-menu" role="dialog" aria-label="Настройки сцены" hidden>
+        <div class="scene-settings__heading">
+          <span>Настройки сцены</span>
+          <small>Отображение</small>
+        </div>
+        <div class="scene-settings__row">
+          <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Названия заметок на сфере</small></span>
+          <button class="scene-switch" id="labels-toggle" type="button" role="switch" aria-checked="true" aria-label="Показывать подписи узлов"><span></span></button>
+        </div>
+      </div>
+    </div>
+
     <header class="topbar">
       <div class="brand" aria-label="CosmoGraph">
         <span class="brand-mark" aria-hidden="true"><span></span></span>
@@ -80,6 +102,10 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>("#graph-canvas")!;
 const shell = document.querySelector<HTMLElement>(".app-shell")!;
 const immersiveToggle = document.querySelector<HTMLButtonElement>("#immersive-toggle")!;
+const sceneSettings = document.querySelector<HTMLElement>("#scene-settings")!;
+const sceneSettingsTrigger = document.querySelector<HTMLButtonElement>("#scene-settings-trigger")!;
+const sceneSettingsMenu = document.querySelector<HTMLElement>("#scene-settings-menu")!;
+const labelsToggle = document.querySelector<HTMLButtonElement>("#labels-toggle")!;
 const fileInput = document.querySelector<HTMLInputElement>("#vault-input")!;
 const searchInput = document.querySelector<HTMLInputElement>("#search-input")!;
 const groupList = document.querySelector<HTMLElement>("#group-list")!;
@@ -104,6 +130,25 @@ let currentNode: GraphNode | null = null;
 let isImmersive = false;
 const graph = new SphericalGraph(canvas);
 const SPHERE_STYLE_KEY = "cosmograph-sphere-style";
+const LABELS_VISIBLE_KEY = "cosmograph-node-labels-visible";
+
+function setSettingsOpen(open: boolean) {
+  sceneSettingsMenu.hidden = !open;
+  sceneSettingsTrigger.classList.toggle("is-active", open);
+  sceneSettingsTrigger.setAttribute("aria-expanded", String(open));
+}
+
+function setLabelsVisible(visible: boolean, persist = true) {
+  graph.setLabelsVisible(visible);
+  labelsToggle.setAttribute("aria-checked", String(visible));
+  labelsToggle.title = visible ? "Скрыть подписи узлов" : "Показать подписи узлов";
+  if (!persist) return;
+  try {
+    window.localStorage.setItem(LABELS_VISIBLE_KEY, String(visible));
+  } catch {
+    // The visual preference remains active for the current session.
+  }
+}
 
 function setImmersive(next: boolean) {
   isImmersive = next;
@@ -113,7 +158,10 @@ function setImmersive(next: boolean) {
   immersiveToggle.setAttribute("aria-label", next ? "Показать интерфейс" : "Скрыть интерфейс");
   immersiveToggle.title = next ? "Показать интерфейс" : "Скрыть интерфейс";
   immersiveToggle.textContent = next ? "UI" : "Сцена";
-  if (next) tooltip.hidden = true;
+  if (next) {
+    tooltip.hidden = true;
+    setSettingsOpen(false);
+  }
 }
 
 function setSphereStyle(style: SphereStyle) {
@@ -139,6 +187,14 @@ try {
   // Storage can be unavailable in privacy-restricted browser contexts.
 }
 setSphereStyle(initialSphereStyle);
+
+let initialLabelsVisible = true;
+try {
+  initialLabelsVisible = window.localStorage.getItem(LABELS_VISIBLE_KEY) !== "false";
+} catch {
+  // Storage can be unavailable in privacy-restricted browser contexts.
+}
+setLabelsVisible(initialLabelsVisible, false);
 
 function renderGroupList(data: GraphData) {
   const counts = new Map<string, number>();
@@ -258,8 +314,21 @@ sphereStyleButtons.forEach((button) => {
   button.addEventListener("click", () => setSphereStyle(button.dataset.sphereStyle as SphereStyle));
 });
 immersiveToggle.addEventListener("click", () => setImmersive(!isImmersive));
+sceneSettingsTrigger.addEventListener("click", () => setSettingsOpen(sceneSettingsMenu.hidden));
+labelsToggle.addEventListener("click", () => setLabelsVisible(labelsToggle.getAttribute("aria-checked") !== "true"));
+document.addEventListener("pointerdown", (event) => {
+  if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
+    setSettingsOpen(false);
+  }
+});
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && isImmersive) setImmersive(false);
+  if (event.key !== "Escape") return;
+  if (!sceneSettingsMenu.hidden) {
+    setSettingsOpen(false);
+    sceneSettingsTrigger.focus();
+  } else if (isImmersive) {
+    setImmersive(false);
+  }
 });
 
 setGraphData(sampleGraph, "Демо");
