@@ -1,6 +1,6 @@
 import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
 import cosmographStyles from "../style.css";
-import { SphericalGraph, type SphereStyle } from "../graph/SphericalGraph";
+import { SphericalGraph, type LabelMode, type SphereStyle } from "../graph/SphericalGraph";
 import type { GraphData, GraphNode } from "../types";
 import { buildVaultGraph } from "./vaultGraph";
 import type CosmographPlugin from "./plugin";
@@ -53,23 +53,39 @@ const PLUGIN_STYLES = `
     pointer-events: none;
   }
   .empty-state[hidden] { display: none; }
+  .app-shell--obsidian .scene-settings { right: 22px; }
+  @media (max-width: 760px) {
+    .app-shell--obsidian .scene-settings { right: 14px; }
+  }
 `;
 
 function viewMarkup() {
   return `
     <main class="app-shell app-shell--obsidian">
-      <button class="immersive-toggle" id="immersive-toggle" type="button" aria-pressed="false" aria-label="Скрыть интерфейс" title="Скрыть интерфейс">Сцена</button>
-
       <div class="scene-settings" id="scene-settings">
         <button class="scene-settings__trigger" id="scene-settings-trigger" type="button" aria-label="Настройки сцены" aria-controls="scene-settings-menu" aria-expanded="false" title="Настройки сцены"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span></button>
         <div class="scene-settings__menu" id="scene-settings-menu" role="dialog" aria-label="Настройки сцены" hidden>
           <div class="scene-settings__heading">
             <span>Настройки сцены</span>
-            <small>Отображение</small>
+            <small>Управление</small>
           </div>
-          <div class="scene-settings__row">
-            <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Названия заметок на сфере</small></span>
-            <button class="scene-switch" id="labels-toggle" type="button" role="switch" aria-checked="true" aria-label="Показывать подписи узлов"><span></span></button>
+          <div class="scene-settings__row scene-settings__row--labels">
+            <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Какие названия показывать</small></span>
+            <div class="label-mode-switch" role="group" aria-label="Режим подписей узлов">
+              <button type="button" data-label-mode="none" aria-pressed="false">Нет</button>
+              <button type="button" data-label-mode="important" aria-pressed="true" class="is-active">Важные</button>
+              <button type="button" data-label-mode="all" aria-pressed="false">Все</button>
+            </div>
+          </div>
+          <div class="scene-settings__actions">
+            <button class="scene-menu-action" id="immersive-toggle" type="button" aria-pressed="false">
+              <span><strong>Сцена</strong><small id="immersive-state">Скрыть интерфейс</small></span>
+              <span class="scene-menu-action__value">Включить</span>
+            </button>
+            <button class="scene-menu-action" id="refresh-button" type="button">
+              <span><strong>Обновить</strong><small>Перестроить граф из vault</small></span>
+              <span class="scene-menu-action__value">Запустить</span>
+            </button>
           </div>
         </div>
       </div>
@@ -78,9 +94,6 @@ function viewMarkup() {
         <div class="brand" aria-label="CosmoGraph">
           <span class="brand-mark" aria-hidden="true"><span></span></span>
           <span class="brand-copy"><strong>CosmoGraph</strong><small>ваш vault, как планета.</small></span>
-        </div>
-        <div class="top-actions">
-          <button class="vault-button" id="refresh-button" type="button">Обновить</button>
         </div>
       </header>
 
@@ -213,7 +226,7 @@ export class CosmographView extends ItemView {
 
   applySettings() {
     this.setSphereStyle(this.plugin.preferences.sphereStyle, false);
-    this.setLabelsVisible(this.plugin.preferences.showNodeLabels, false);
+    this.setLabelMode(this.plugin.preferences.labelMode, false);
   }
 
   refreshGraph() {
@@ -250,22 +263,25 @@ export class CosmographView extends ItemView {
     const sceneSettings = this.find<HTMLElement>("#scene-settings");
     const sceneSettingsTrigger = this.find<HTMLButtonElement>("#scene-settings-trigger");
     const sceneSettingsMenu = this.find<HTMLElement>("#scene-settings-menu");
-    const labelsToggle = this.find<HTMLButtonElement>("#labels-toggle");
+    const labelModeButtons = this.findAll<HTMLButtonElement>("[data-label-mode]");
     const sphereStyleButtons = this.findAll<HTMLButtonElement>("[data-sphere-style]");
 
     searchInput.addEventListener("input", () => this.graph?.setSearch(searchInput.value));
     this.find<HTMLButtonElement>("#panel-close").addEventListener("click", () => this.showNode(null));
     this.find<HTMLButtonElement>("#panel-open").addEventListener("click", () => void this.openCurrentNote());
-    this.find<HTMLButtonElement>("#refresh-button").addEventListener("click", () => this.refreshGraph());
+    this.find<HTMLButtonElement>("#refresh-button").addEventListener("click", () => {
+      this.setSettingsOpen(false);
+      this.refreshGraph();
+    });
     this.find<HTMLButtonElement>("#focus-button").addEventListener("click", () => {
       const target = this.currentNode ?? this.graph?.getPrimaryNode();
       if (target) this.graph?.focusNode(target.id);
     });
     immersiveToggle.addEventListener("click", () => this.setImmersive(!this.isImmersive));
     sceneSettingsTrigger.addEventListener("click", () => this.setSettingsOpen(sceneSettingsMenu.hidden));
-    labelsToggle.addEventListener("click", () => {
-      this.setLabelsVisible(labelsToggle.getAttribute("aria-checked") !== "true", true);
-    });
+    labelModeButtons.forEach((button) => button.addEventListener("click", () => {
+      this.setLabelMode(button.dataset.labelMode as LabelMode, true);
+    }));
     this.shadow?.addEventListener("pointerdown", (event) => {
       if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
         this.setSettingsOpen(false);
@@ -419,13 +435,15 @@ export class CosmographView extends ItemView {
     trigger.setAttribute("aria-expanded", String(open));
   }
 
-  private setLabelsVisible(visible: boolean, persist: boolean) {
-    this.graph?.setLabelsVisible(visible);
-    const toggle = this.find<HTMLButtonElement>("#labels-toggle");
-    toggle.setAttribute("aria-checked", String(visible));
-    toggle.title = visible ? "Скрыть подписи узлов" : "Показать подписи узлов";
+  private setLabelMode(mode: LabelMode, persist: boolean) {
+    this.graph?.setLabelMode(mode);
+    this.findAll<HTMLButtonElement>("[data-label-mode]").forEach((button) => {
+      const active = button.dataset.labelMode === mode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
     if (persist) {
-      this.plugin.preferences.showNodeLabels = visible;
+      this.plugin.preferences.labelMode = mode;
       void this.plugin.saveSettings();
     }
   }
@@ -434,10 +452,13 @@ export class CosmographView extends ItemView {
     this.isImmersive = next;
     this.shell?.classList.toggle("is-immersive", next);
     const button = this.find<HTMLButtonElement>("#immersive-toggle");
+    const state = this.find<HTMLElement>("#immersive-state");
     button.setAttribute("aria-pressed", String(next));
+    button.classList.toggle("is-active", next);
     button.setAttribute("aria-label", next ? "Показать интерфейс" : "Скрыть интерфейс");
     button.title = next ? "Показать интерфейс" : "Скрыть интерфейс";
-    button.textContent = next ? "UI" : "Сцена";
+    state.textContent = next ? "Показать интерфейс" : "Скрыть интерфейс";
+    button.querySelector<HTMLElement>(".scene-menu-action__value")!.textContent = next ? "Выключить" : "Включить";
     if (next) {
       this.find<HTMLElement>("#node-tooltip").hidden = true;
       this.setSettingsOpen(false);

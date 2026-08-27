@@ -41,7 +41,13 @@ export default class CosmographPlugin extends Plugin implements SettingsControll
   }
 
   async loadSettings() {
-    this.preferences = { ...DEFAULT_SETTINGS, ...await this.loadData() as Partial<CosmographSettings> | null };
+    const stored = await this.loadData() as (Partial<CosmographSettings> & { showNodeLabels?: boolean }) | null;
+    const { showNodeLabels, ...current } = stored ?? {};
+    this.preferences = {
+      ...DEFAULT_SETTINGS,
+      ...current,
+      labelMode: current.labelMode ?? (showNodeLabels === false ? "none" : "important"),
+    };
   }
 
   async saveSettings() {

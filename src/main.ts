@@ -1,6 +1,6 @@
 import "./style.css";
 import { sampleGraph } from "./data/sample";
-import { SphericalGraph, type SphereStyle } from "./graph/SphericalGraph";
+import { SphericalGraph, type LabelMode, type SphereStyle } from "./graph/SphericalGraph";
 import type { GraphData, GraphNode } from "./types";
 import { parseVaultFiles } from "./vault";
 
@@ -9,15 +9,6 @@ if (!app) throw new Error("App root is missing");
 
 app.innerHTML = `
   <main class="app-shell">
-    <button
-      class="immersive-toggle"
-      id="immersive-toggle"
-      type="button"
-      aria-pressed="false"
-      aria-label="Скрыть интерфейс"
-      title="Скрыть интерфейс"
-    >Сцена</button>
-
     <div class="scene-settings" id="scene-settings">
       <button
         class="scene-settings__trigger"
@@ -31,11 +22,21 @@ app.innerHTML = `
       <div class="scene-settings__menu" id="scene-settings-menu" role="dialog" aria-label="Настройки сцены" hidden>
         <div class="scene-settings__heading">
           <span>Настройки сцены</span>
-          <small>Отображение</small>
+          <small>Управление</small>
         </div>
-        <div class="scene-settings__row">
-          <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Названия заметок на сфере</small></span>
-          <button class="scene-switch" id="labels-toggle" type="button" role="switch" aria-checked="true" aria-label="Показывать подписи узлов"><span></span></button>
+        <div class="scene-settings__row scene-settings__row--labels">
+          <span class="scene-settings__copy"><strong>Подписи узлов</strong><small>Какие названия показывать</small></span>
+          <div class="label-mode-switch" role="group" aria-label="Режим подписей узлов">
+            <button type="button" data-label-mode="none" aria-pressed="false">Нет</button>
+            <button type="button" data-label-mode="important" aria-pressed="true" class="is-active">Важные</button>
+            <button type="button" data-label-mode="all" aria-pressed="false">Все</button>
+          </div>
+        </div>
+        <div class="scene-settings__actions">
+          <button class="scene-menu-action" id="immersive-toggle" type="button" aria-pressed="false">
+            <span><strong>Сцена</strong><small id="immersive-state">Скрыть интерфейс</small></span>
+            <span class="scene-menu-action__value">Включить</span>
+          </button>
         </div>
       </div>
     </div>
@@ -102,10 +103,11 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>("#graph-canvas")!;
 const shell = document.querySelector<HTMLElement>(".app-shell")!;
 const immersiveToggle = document.querySelector<HTMLButtonElement>("#immersive-toggle")!;
+const immersiveState = document.querySelector<HTMLElement>("#immersive-state")!;
 const sceneSettings = document.querySelector<HTMLElement>("#scene-settings")!;
 const sceneSettingsTrigger = document.querySelector<HTMLButtonElement>("#scene-settings-trigger")!;
 const sceneSettingsMenu = document.querySelector<HTMLElement>("#scene-settings-menu")!;
-const labelsToggle = document.querySelector<HTMLButtonElement>("#labels-toggle")!;
+const labelModeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-label-mode]")];
 const fileInput = document.querySelector<HTMLInputElement>("#vault-input")!;
 const searchInput = document.querySelector<HTMLInputElement>("#search-input")!;
 const groupList = document.querySelector<HTMLElement>("#group-list")!;
@@ -130,7 +132,8 @@ let currentNode: GraphNode | null = null;
 let isImmersive = false;
 const graph = new SphericalGraph(canvas);
 const SPHERE_STYLE_KEY = "cosmograph-sphere-style";
-const LABELS_VISIBLE_KEY = "cosmograph-node-labels-visible";
+const LABEL_MODE_KEY = "cosmograph-node-label-mode";
+const LEGACY_LABELS_VISIBLE_KEY = "cosmograph-node-labels-visible";
 
 function setSettingsOpen(open: boolean) {
   sceneSettingsMenu.hidden = !open;
@@ -138,13 +141,16 @@ function setSettingsOpen(open: boolean) {
   sceneSettingsTrigger.setAttribute("aria-expanded", String(open));
 }
 
-function setLabelsVisible(visible: boolean, persist = true) {
-  graph.setLabelsVisible(visible);
-  labelsToggle.setAttribute("aria-checked", String(visible));
-  labelsToggle.title = visible ? "Скрыть подписи узлов" : "Показать подписи узлов";
+function setLabelMode(mode: LabelMode, persist = true) {
+  graph.setLabelMode(mode);
+  labelModeButtons.forEach((button) => {
+    const active = button.dataset.labelMode === mode;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
   if (!persist) return;
   try {
-    window.localStorage.setItem(LABELS_VISIBLE_KEY, String(visible));
+    window.localStorage.setItem(LABEL_MODE_KEY, mode);
   } catch {
     // The visual preference remains active for the current session.
   }
@@ -157,7 +163,8 @@ function setImmersive(next: boolean) {
   immersiveToggle.setAttribute("aria-pressed", String(next));
   immersiveToggle.setAttribute("aria-label", next ? "Показать интерфейс" : "Скрыть интерфейс");
   immersiveToggle.title = next ? "Показать интерфейс" : "Скрыть интерфейс";
-  immersiveToggle.textContent = next ? "UI" : "Сцена";
+  immersiveState.textContent = next ? "Показать интерфейс" : "Скрыть интерфейс";
+  immersiveToggle.querySelector<HTMLElement>(".scene-menu-action__value")!.textContent = next ? "Выключить" : "Включить";
   if (next) {
     tooltip.hidden = true;
     setSettingsOpen(false);
@@ -188,13 +195,18 @@ try {
 }
 setSphereStyle(initialSphereStyle);
 
-let initialLabelsVisible = true;
+let initialLabelMode: LabelMode = "important";
 try {
-  initialLabelsVisible = window.localStorage.getItem(LABELS_VISIBLE_KEY) !== "false";
+  const storedMode = window.localStorage.getItem(LABEL_MODE_KEY);
+  if (storedMode === "none" || storedMode === "important" || storedMode === "all") {
+    initialLabelMode = storedMode;
+  } else if (window.localStorage.getItem(LEGACY_LABELS_VISIBLE_KEY) === "false") {
+    initialLabelMode = "none";
+  }
 } catch {
   // Storage can be unavailable in privacy-restricted browser contexts.
 }
-setLabelsVisible(initialLabelsVisible, false);
+setLabelMode(initialLabelMode, false);
 
 function renderGroupList(data: GraphData) {
   const counts = new Map<string, number>();
@@ -315,7 +327,9 @@ sphereStyleButtons.forEach((button) => {
 });
 immersiveToggle.addEventListener("click", () => setImmersive(!isImmersive));
 sceneSettingsTrigger.addEventListener("click", () => setSettingsOpen(sceneSettingsMenu.hidden));
-labelsToggle.addEventListener("click", () => setLabelsVisible(labelsToggle.getAttribute("aria-checked") !== "true"));
+labelModeButtons.forEach((button) => button.addEventListener("click", () => {
+  setLabelMode(button.dataset.labelMode as LabelMode);
+}));
 document.addEventListener("pointerdown", (event) => {
   if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
     setSettingsOpen(false);

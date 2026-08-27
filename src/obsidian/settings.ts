@@ -1,16 +1,16 @@
 import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
-import type { SphereStyle } from "../graph/SphericalGraph";
+import type { LabelMode, SphereStyle } from "../graph/SphericalGraph";
 
 export type CosmographSettings = {
   sphereStyle: SphereStyle;
-  showNodeLabels: boolean;
+  labelMode: LabelMode;
   openNotesInNewTab: boolean;
   refreshAutomatically: boolean;
 };
 
 export const DEFAULT_SETTINGS: CosmographSettings = {
   sphereStyle: "radiant",
-  showNodeLabels: true,
+  labelMode: "important",
   openNotesInNewTab: true,
   refreshAutomatically: true,
 };
@@ -44,12 +44,15 @@ export class CosmographSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
-      .setName("Show node labels")
-      .setDesc("Display note and cluster names directly on the sphere.")
-      .addToggle((toggle) => toggle
-        .setValue(this.controller.preferences.showNodeLabels)
+      .setName("Node labels")
+      .setDesc("Choose whether to hide labels, show important nodes, or show every node.")
+      .addDropdown((dropdown) => dropdown
+        .addOption("none", "None")
+        .addOption("important", "Important")
+        .addOption("all", "All")
+        .setValue(this.controller.preferences.labelMode)
         .onChange(async (value) => {
-          this.controller.preferences.showNodeLabels = value;
+          this.controller.preferences.labelMode = value as LabelMode;
           await this.controller.saveSettings();
           this.controller.applySettingsToViews();
         }));

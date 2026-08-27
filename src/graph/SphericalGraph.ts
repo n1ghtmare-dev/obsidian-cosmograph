@@ -9,6 +9,7 @@ import type { GraphData, GraphNode } from "../types";
 type SelectHandler = (node: GraphNode | null) => void;
 type HoverHandler = (node: GraphNode | null, x: number, y: number) => void;
 export type SphereStyle = "calm" | "radiant";
+export type LabelMode = "none" | "important" | "all";
 
 type NodeVisual = {
   node: GraphNode;
@@ -19,6 +20,7 @@ type NodeVisual = {
   marker: THREE.Sprite;
   glow: THREE.Sprite;
   label?: CSS2DObject;
+  importantLabel: boolean;
   baseScale: number;
   calmColor: THREE.Color;
   radiantColor: THREE.Color;
@@ -300,6 +302,7 @@ export class SphericalGraph {
   private orbitingMoteCalmColors!: THREE.BufferAttribute;
   private orbitingMoteRadiantColors!: THREE.BufferAttribute;
   private sphereStyle: SphereStyle = "radiant";
+  private labelMode: LabelMode = "important";
   private readonly nodeVisuals: NodeVisual[] = [];
   private readonly hitMeshes: THREE.Mesh[] = [];
   private readonly degrees = new Map<string, number>();
@@ -381,9 +384,11 @@ export class SphericalGraph {
     this.onHover = onHover;
   }
 
-  setLabelsVisible(visible: boolean) {
-    this.labelRenderer.domElement.classList.toggle("is-hidden", !visible);
-    this.labelRenderer.domElement.setAttribute("aria-hidden", String(!visible));
+  setLabelMode(mode: LabelMode) {
+    this.labelMode = mode;
+    const hidden = mode === "none";
+    this.labelRenderer.domElement.classList.toggle("is-hidden", hidden);
+    this.labelRenderer.domElement.setAttribute("aria-hidden", String(hidden));
   }
 
   getPrimaryNode() {
@@ -496,7 +501,7 @@ export class SphericalGraph {
     const rankedNotes = [...data.nodes]
       .sort((a, b) => (this.degrees.get(b.id) ?? 0) - (this.degrees.get(a.id) ?? 0))
       .slice(0, Math.min(15, Math.max(8, Math.round(Math.sqrt(data.nodes.length) * 2.8))));
-    const labeledIds = new Set(rankedNotes.map((node) => node.id));
+    const importantLabelIds = new Set(rankedNotes.map((node) => node.id));
 
     clusterNodes.forEach((cluster, index) => {
       const visual = this.createNodeVisual(
@@ -525,7 +530,7 @@ export class SphericalGraph {
         radiantColorByGroup.get(node.group)!,
         calmColorByGroup.get(node.group)!,
         false,
-        labeledIds.has(node.id),
+        importantLabelIds.has(node.id),
       );
       this.nodeVisuals.push(visual);
       this.networkRoot.add(visual.group);
@@ -1310,7 +1315,7 @@ export class SphericalGraph {
     radiantColorValue: number,
     calmColorValue: number,
     cluster: boolean,
-    label: boolean,
+    importantLabel: boolean,
   ): NodeVisual {
     const group = new THREE.Group();
     group.position.copy(position);
@@ -1363,15 +1368,12 @@ export class SphericalGraph {
     group.add(hit);
     this.hitMeshes.push(hit);
 
-    let labelObject: CSS2DObject | undefined;
-    if (label) {
-      const element = document.createElement("span");
-      element.className = cluster ? "graph-label graph-label--cluster" : "graph-label";
-      element.textContent = node.title;
-      labelObject = new CSS2DObject(element);
-      labelObject.position.set(radius * 1.5, cluster ? -0.22 : -0.13, 0);
-      group.add(labelObject);
-    }
+    const element = document.createElement("span");
+    element.className = cluster ? "graph-label graph-label--cluster" : "graph-label";
+    element.textContent = node.title;
+    const labelObject = new CSS2DObject(element);
+    labelObject.position.set(radius * 1.5, cluster ? -0.22 : -0.13, 0);
+    group.add(labelObject);
 
     return {
       node,
@@ -1382,6 +1384,7 @@ export class SphericalGraph {
       marker,
       glow,
       label: labelObject,
+      importantLabel,
       baseScale: cluster ? 1.06 : 1,
       calmColor,
       radiantColor,
@@ -1492,7 +1495,14 @@ export class SphericalGraph {
 
       if (label) {
         const searchMatch = label.element.dataset.searchMatch !== "false";
-        const opacity = searchMatch ? THREE.MathUtils.smoothstep(facing, -0.12, 0.34) : 0;
+        const modeMatch = this.labelMode === "all"
+          || (this.labelMode === "important" && (
+            visual.importantLabel
+            || selected
+            || hovered
+            || (this.search.length > 0 && searchMatch)
+          ));
+        const opacity = modeMatch && searchMatch ? THREE.MathUtils.smoothstep(facing, -0.12, 0.34) : 0;
         label.element.style.opacity = String(opacity);
         label.element.style.visibility = opacity < 0.06 ? "hidden" : "visible";
       }
@@ -1620,7 +1630,7 @@ export class SphericalGraph {
     }
     this.updateNodeVisuals(elapsed, delta);
     this.composer.render();
-    this.labelRenderer.render(this.scene, this.camera);
+    if (this.labelMode !== "none") this.labelRenderer.render(this.scene, this.camera);
     this.animationFrame = window.requestAnimationFrame(this.animate);
   };
 

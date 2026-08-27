@@ -38,33 +38,11 @@ button, label { -webkit-tap-highlight-color: transparent; }
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 140 140' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.9'/%3E%3C/svg%3E");
 }
 
-.immersive-toggle {
-  position: absolute;
-  z-index: 10;
-  top: 26px;
-  right: 142px;
-  min-width: 48px;
-  height: 34px;
-  padding: 0 11px;
-  border: 1px solid rgba(185, 197, 224, 0.1);
-  border-radius: 10px;
-  background: rgba(10, 13, 21, 0.76);
-  color: #9ca3b2;
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025), 0 10px 28px rgba(0, 0, 0, 0.16);
-  backdrop-filter: blur(16px);
-  cursor: pointer;
-  font-size: 9px;
-  letter-spacing: 0.02em;
-  transition: color 160ms ease, border-color 160ms ease, background 160ms ease, opacity 220ms ease;
-}
-.immersive-toggle:hover { color: #e5e9f0; border-color: rgba(201, 144, 180, 0.3); background: rgba(18, 20, 30, 0.92); }
-.immersive-toggle:active { transform: translateY(1px); }
-.immersive-toggle:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: 2px; }
 .scene-settings {
   position: absolute;
   z-index: 11;
   top: 26px;
-  right: 200px;
+  right: 142px;
 }
 .scene-settings__trigger {
   width: 34px;
@@ -128,45 +106,59 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .scene-settings__copy { display: grid; gap: 3px; }
 .scene-settings__copy strong { color: #dfe4ed; font-size: 10px; font-weight: 520; }
 .scene-settings__copy small { color: #757c8a; font-size: 8px; line-height: 1.3; }
-.scene-switch {
-  position: relative;
-  flex: 0 0 auto;
-  width: 30px;
-  height: 17px;
-  padding: 0;
-  border: 1px solid rgba(180, 193, 222, 0.16);
-  border-radius: 999px;
-  background: rgba(91, 99, 119, 0.24);
+.scene-settings__row--labels { display: grid; align-items: stretch; gap: 9px; }
+.label-mode-switch {
+  display: grid;
+  grid-template-columns: 0.8fr 1.25fr 0.8fr;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(184, 194, 222, 0.08);
+  border-radius: 8px;
+  background: rgba(3, 5, 14, 0.48);
+}
+.label-mode-switch button {
+  min-width: 0;
+  height: 25px;
+  padding: 0 5px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #777d89;
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  font-size: 8px;
+  white-space: nowrap;
+  transition: color 160ms ease, background 160ms ease, transform 120ms ease;
 }
-.scene-switch > span {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: #9299a8;
-  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), background 160ms ease, box-shadow 160ms ease;
+.label-mode-switch button:hover { color: #d8dde6; }
+.label-mode-switch button.is-active { color: #efbadb; background: rgba(185, 123, 160, 0.15); }
+.label-mode-switch button:active { transform: translateY(1px); }
+.label-mode-switch button:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: -1px; }
+.scene-settings__actions { display: grid; gap: 3px; margin-top: 6px; }
+.scene-menu-action {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #dfe4ed;
+  cursor: pointer;
+  text-align: left;
+  transition: color 160ms ease, background 160ms ease, transform 120ms ease;
 }
-.scene-switch[aria-checked="true"] { border-color: rgba(240, 139, 215, 0.36); background: rgba(185, 89, 166, 0.28); box-shadow: inset 0 0 9px rgba(240, 139, 215, 0.08); }
-.scene-switch[aria-checked="true"] > span { transform: translateX(13px); background: #f3a1df; box-shadow: 0 0 8px rgba(240, 139, 215, 0.52); }
-.scene-switch:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: 2px; }
-.app-shell.is-immersive .immersive-toggle {
-  position: fixed;
-  top: 18px;
-  right: 18px;
-  min-width: 36px;
-  height: 32px;
-  padding-inline: 9px;
-  color: rgba(221, 226, 237, 0.76);
-  background: rgba(8, 10, 18, 0.58);
-  border-color: rgba(188, 201, 230, 0.1);
-}
-
+.scene-menu-action:hover { color: #f2f4f8; background: rgba(198, 206, 226, 0.055); }
+.scene-menu-action:active { transform: translateY(1px); }
+.scene-menu-action:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: -1px; }
+.scene-menu-action > span:first-child { display: grid; gap: 3px; }
+.scene-menu-action strong { font-size: 10px; font-weight: 520; }
+.scene-menu-action small { color: #757c8a; font-size: 8px; font-weight: 400; }
+.scene-menu-action__value { color: #9a8396; font-size: 8px; transition: color 160ms ease; }
+.scene-menu-action.is-active .scene-menu-action__value { color: #e6a4d2; }
 .topbar,
-.scene-settings,
 .library-sidebar,
 .note-panel,
 .view-dock,
@@ -174,7 +166,6 @@ button, label { -webkit-tap-highlight-color: transparent; }
   transition: opacity 220ms ease, visibility 220ms ease;
 }
 .app-shell.is-immersive .topbar,
-.app-shell.is-immersive .scene-settings,
 .app-shell.is-immersive .library-sidebar,
 .app-shell.is-immersive .note-panel,
 .app-shell.is-immersive .view-dock,
@@ -247,7 +238,8 @@ button, label { -webkit-tap-highlight-color: transparent; }
   width: 184px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  gap: 18px;
   pointer-events: none;
 }
 .library-sidebar nav, .search-field { pointer-events: auto; }
@@ -406,10 +398,8 @@ button, label { -webkit-tap-highlight-color: transparent; }
 @keyframes settings-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
 @media (max-width: 760px) {
-  .immersive-toggle { top: 17px; right: 118px; }
-  .scene-settings { top: 17px; right: 162px; }
+  .scene-settings { top: 17px; right: 118px; }
   .scene-settings__menu { position: fixed; top: 60px; right: 12px; }
-  .app-shell.is-immersive .immersive-toggle { top: 12px; right: 12px; }
   .topbar { height: 68px; padding: 0 14px; }
   .brand-copy small { display: none; }
   .library-sidebar { display: none; }
@@ -425,5 +415,5 @@ button, label { -webkit-tap-highlight-color: transparent; }
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .note-panel, .view-dock, .vault-button, .immersive-toggle, .scene-settings__trigger, .scene-settings__menu { background: #0b0e16; backdrop-filter: none; }
+  .note-panel, .view-dock, .vault-button, .scene-settings__trigger, .scene-settings__menu { background: #0b0e16; backdrop-filter: none; }
 }
