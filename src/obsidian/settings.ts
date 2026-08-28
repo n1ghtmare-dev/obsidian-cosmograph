@@ -4,6 +4,7 @@ import type { LabelMode, SphereStyle } from "../graph/SphericalGraph";
 export type CosmographSettings = {
   sphereStyle: SphereStyle;
   labelMode: LabelMode;
+  groupDepth: number;
   openNotesInNewTab: boolean;
   refreshAutomatically: boolean;
 };
@@ -11,6 +12,7 @@ export type CosmographSettings = {
 export const DEFAULT_SETTINGS: CosmographSettings = {
   sphereStyle: "radiant",
   labelMode: "important",
+  groupDepth: 1,
   openNotesInNewTab: true,
   refreshAutomatically: true,
 };
@@ -19,6 +21,7 @@ export type SettingsController = Plugin & {
   preferences: CosmographSettings;
   saveSettings(): Promise<void>;
   applySettingsToViews(): void;
+  rebuildViews(): void;
 };
 
 export class CosmographSettingTab extends PluginSettingTab {
@@ -55,6 +58,20 @@ export class CosmographSettingTab extends PluginSettingTab {
           this.controller.preferences.labelMode = value as LabelMode;
           await this.controller.saveSettings();
           this.controller.applySettingsToViews();
+        }));
+
+    new Setting(containerEl)
+      .setName("Cluster folder depth")
+      .setDesc("How many folder levels define a cluster. 1 keeps a whole top-level folder together, 2 splits it by subfolder (Projects/alpha, Projects/beta).")
+      .addDropdown((dropdown) => dropdown
+        .addOption("1", "1 — top-level folder")
+        .addOption("2", "2 — subfolder")
+        .addOption("3", "3 — sub-subfolder")
+        .setValue(String(this.controller.preferences.groupDepth))
+        .onChange(async (value) => {
+          this.controller.preferences.groupDepth = Number(value);
+          await this.controller.saveSettings();
+          this.controller.rebuildViews();
         }));
 
     new Setting(containerEl)

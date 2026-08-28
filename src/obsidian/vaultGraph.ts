@@ -1,18 +1,24 @@
 import type { App } from "obsidian";
 import type { GraphData, GraphNode } from "../types";
 
-function displayGroupName(path: string) {
-  const firstFolder = path.includes("/") ? path.split("/")[0] : "Root";
-  return firstFolder.replace(/^\d+[.]?\s*/, "") || "Root";
+function stripOrderPrefix(segment: string) {
+  return segment.replace(/^\d+[.]?\s*/, "");
 }
 
-export function buildVaultGraph(app: App): GraphData {
+export function groupNameFor(path: string, depth = 1) {
+  const folders = path.split("/").slice(0, -1);
+  if (folders.length === 0) return "Root";
+  const levels = Math.min(Math.max(depth, 1), folders.length);
+  return folders.slice(0, levels).map(stripOrderPrefix).join("/") || "Root";
+}
+
+export function buildVaultGraph(app: App, groupDepth = 1): GraphData {
   const files = app.vault.getMarkdownFiles();
   const nodes: GraphNode[] = files.map((file) => ({
     id: file.path,
     title: file.basename,
     path: file.path,
-    group: displayGroupName(file.path),
+    group: groupNameFor(file.path, groupDepth),
   }));
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edgeKeys = new Set<string>();
