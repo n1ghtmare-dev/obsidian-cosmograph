@@ -2,13 +2,15 @@ import type { App } from "obsidian";
 import type { GraphData, GraphNode } from "../types";
 
 function stripOrderPrefix(segment: string) {
-  return segment.replace(/^\d+[.]?\s*/, "");
+  const stripped = segment.replace(/^\d+(?:[.]\s*|\s+)/, "");
+  return stripped || segment;
 }
 
 export function groupNameFor(path: string, depth = 1) {
   const folders = path.split("/").slice(0, -1);
   if (folders.length === 0) return "Root";
-  const levels = Math.min(Math.max(depth, 1), folders.length);
+  const normalizedDepth = Number.isFinite(depth) ? Math.trunc(depth) : 1;
+  const levels = Math.min(Math.max(normalizedDepth, 1), folders.length);
   return folders.slice(0, levels).map(stripOrderPrefix).join("/") || "Root";
 }
 

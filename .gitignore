@@ -7,4 +7,5 @@ main.js
 .env.*
 !.env.example
 .vite/
+.test-build/
 coverage/

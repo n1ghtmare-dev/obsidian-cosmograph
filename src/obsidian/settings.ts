@@ -62,7 +62,7 @@ export class CosmographSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Cluster folder depth")
-      .setDesc("How many folder levels define a cluster. 1 keeps a whole top-level folder together, 2 splits it by subfolder (Projects/alpha, Projects/beta).")
+      .setDesc("Choose how many folder levels define a cluster. Depth 1 keeps each top-level folder together; depth 2 splits it into subfolder clusters.")
       .addDropdown((dropdown) => dropdown
         .addOption("1", "1 — top-level folder")
         .addOption("2", "2 — subfolder")
