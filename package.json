@@ -1,7 +1,7 @@
 {
   "name": "obsidian-cosmograph",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Immersive 3D spherical knowledge graph for Obsidian vaults.",
   "license": "MIT",
   "author": "n1ghtmare-dev",
