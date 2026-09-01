@@ -19,6 +19,8 @@ test("clamps depth to available folders and handles root notes", () => {
 test("strips ordering prefixes while preserving numeric folder names", () => {
   assert.equal(groupNameFor("10. Projects/20 Alpha/Ideas.md", 2), "Projects/Alpha");
   assert.equal(groupNameFor("10 Projects/20 Alpha/Ideas.md", 2), "Projects/Alpha");
+  assert.equal(groupNameFor("10. Projects/10.20 IT Projects/Ideas.md", 2), "Projects/IT Projects");
+  assert.equal(groupNameFor("10. Projects/10.40.001 Indigo Media/Ideas.md", 2), "Projects/Indigo Media");
   assert.equal(groupNameFor("Archive/2025/January.md", 2), "Archive/2025");
   assert.equal(groupNameFor("Archive/2026/January.md", 2), "Archive/2026");
 });

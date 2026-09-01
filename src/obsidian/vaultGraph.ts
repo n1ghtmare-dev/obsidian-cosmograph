@@ -2,7 +2,7 @@ import type { App } from "obsidian";
 import type { GraphData, GraphNode } from "../types";
 
 function stripOrderPrefix(segment: string) {
-  const stripped = segment.replace(/^\d+(?:[.]\s*|\s+)/, "");
+  const stripped = segment.replace(/^\d+(?:[.]\d+)*(?:[.]\s*|\s+)/, "");
   return stripped || segment;
 }
 

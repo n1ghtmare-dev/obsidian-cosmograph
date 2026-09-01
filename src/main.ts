@@ -1,6 +1,7 @@
 import "./style.css";
 import { sampleGraph } from "./data/sample";
 import { SphericalGraph, type LabelMode, type SphereStyle } from "./graph/SphericalGraph";
+import { groupNameFor } from "./obsidian/vaultGraph";
 import type { GraphData, GraphNode } from "./types";
 import { parseVaultFiles } from "./vault";
 
@@ -30,6 +31,14 @@ app.innerHTML = `
             <button type="button" data-label-mode="none" aria-pressed="false">Нет</button>
             <button type="button" data-label-mode="important" aria-pressed="true" class="is-active">Важные</button>
             <button type="button" data-label-mode="all" aria-pressed="false">Все</button>
+          </div>
+        </div>
+        <div class="scene-settings__row scene-settings__row--clusters">
+          <span class="scene-settings__copy"><strong>Глубина кластеров</strong><small>Насколько дробить папки</small></span>
+          <div class="cluster-depth-switch" role="group" aria-label="Глубина папок для кластеров">
+            <button type="button" data-group-depth="1" aria-label="Один уровень папок" aria-pressed="true" class="is-active">1</button>
+            <button type="button" data-group-depth="2" aria-label="Два уровня папок" aria-pressed="false">2</button>
+            <button type="button" data-group-depth="3" aria-label="Три уровня папок" aria-pressed="false">3</button>
           </div>
         </div>
         <div class="scene-settings__actions">
@@ -108,6 +117,7 @@ const sceneSettings = document.querySelector<HTMLElement>("#scene-settings")!;
 const sceneSettingsTrigger = document.querySelector<HTMLButtonElement>("#scene-settings-trigger")!;
 const sceneSettingsMenu = document.querySelector<HTMLElement>("#scene-settings-menu")!;
 const labelModeButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-label-mode]")];
+const groupDepthButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-group-depth]")];
 const fileInput = document.querySelector<HTMLInputElement>("#vault-input")!;
 const searchInput = document.querySelector<HTMLInputElement>("#search-input")!;
 const groupList = document.querySelector<HTMLElement>("#group-list")!;
@@ -127,12 +137,16 @@ const tooltip = document.querySelector<HTMLElement>("#node-tooltip")!;
 const loadingState = document.querySelector<HTMLElement>("#loading-state")!;
 const sphereStyleButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-sphere-style]")];
 
+let sourceGraph = sampleGraph;
 let currentGraph = sampleGraph;
+let currentGraphStatus = "Демо";
 let currentNode: GraphNode | null = null;
 let isImmersive = false;
+let currentGroupDepth = 1;
 const graph = new SphericalGraph(canvas);
 const SPHERE_STYLE_KEY = "cosmograph-sphere-style";
 const LABEL_MODE_KEY = "cosmograph-node-label-mode";
+const GROUP_DEPTH_KEY = "cosmograph-cluster-folder-depth";
 const LEGACY_LABELS_VISIBLE_KEY = "cosmograph-node-labels-visible";
 
 function setSettingsOpen(open: boolean) {
@@ -154,6 +168,33 @@ function setLabelMode(mode: LabelMode, persist = true) {
   } catch {
     // The visual preference remains active for the current session.
   }
+}
+
+function graphAtDepth(data: GraphData, depth: number): GraphData {
+  return {
+    ...data,
+    nodes: data.nodes.map((node) => node.kind === "cluster" ? node : {
+      ...node,
+      group: groupNameFor(node.path, depth),
+    }),
+  };
+}
+
+function setGroupDepth(depth: number, persist = true, rebuild = true) {
+  currentGroupDepth = Math.min(3, Math.max(1, Math.trunc(depth) || 1));
+  groupDepthButtons.forEach((button) => {
+    const active = Number(button.dataset.groupDepth) === currentGroupDepth;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  if (persist) {
+    try {
+      window.localStorage.setItem(GROUP_DEPTH_KEY, String(currentGroupDepth));
+    } catch {
+      // The visual preference remains active for the current session.
+    }
+  }
+  if (rebuild) setGraphData(graphAtDepth(sourceGraph, currentGroupDepth), currentGraphStatus);
 }
 
 function setImmersive(next: boolean) {
@@ -207,6 +248,15 @@ try {
   // Storage can be unavailable in privacy-restricted browser contexts.
 }
 setLabelMode(initialLabelMode, false);
+
+let initialGroupDepth = 1;
+try {
+  const storedDepth = Number(window.localStorage.getItem(GROUP_DEPTH_KEY));
+  if (storedDepth >= 1 && storedDepth <= 3) initialGroupDepth = storedDepth;
+} catch {
+  // Storage can be unavailable in privacy-restricted browser contexts.
+}
+setGroupDepth(initialGroupDepth, false, false);
 
 function renderGroupList(data: GraphData) {
   const counts = new Map<string, number>();
@@ -289,6 +339,12 @@ function setGraphData(data: GraphData, status: string) {
   showNode(window.innerWidth < 760 ? null : graph.getPrimaryNode(), false);
 }
 
+function setSourceGraph(data: GraphData, status: string) {
+  sourceGraph = data;
+  currentGraphStatus = status;
+  setGraphData(graphAtDepth(data, currentGroupDepth), status);
+}
+
 graph.setHandlers((node) => showNode(node, false), (node, x, y) => {
   if (!node) {
     tooltip.hidden = true;
@@ -305,7 +361,7 @@ async function openSelectedVault() {
   dockStatus.textContent = "Читаем заметки";
   try {
     const data = await parseVaultFiles(fileInput.files);
-    setGraphData(data, "Локальный vault");
+    setSourceGraph(data, "Локальный vault");
   } catch (error) {
     dockStatus.textContent = error instanceof Error ? error.message : "Не удалось открыть vault";
   } finally {
@@ -330,6 +386,9 @@ sceneSettingsTrigger.addEventListener("click", () => setSettingsOpen(sceneSettin
 labelModeButtons.forEach((button) => button.addEventListener("click", () => {
   setLabelMode(button.dataset.labelMode as LabelMode);
 }));
+groupDepthButtons.forEach((button) => button.addEventListener("click", () => {
+  setGroupDepth(Number(button.dataset.groupDepth));
+}));
 document.addEventListener("pointerdown", (event) => {
   if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
     setSettingsOpen(false);
@@ -345,6 +404,6 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-setGraphData(sampleGraph, "Демо");
+setSourceGraph(sampleGraph, "Демо");
 
 window.addEventListener("pagehide", () => graph.destroy(), { once: true });

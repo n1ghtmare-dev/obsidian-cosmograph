@@ -79,6 +79,9 @@ button, label { -webkit-tap-highlight-color: transparent; }
   top: 43px;
   right: 0;
   width: 238px;
+  max-height: calc(100dvh - 86px);
+  overflow-y: auto;
+  scrollbar-width: thin;
   padding: 8px;
   border: 1px solid rgba(184, 196, 224, 0.13);
   border-radius: 12px;
@@ -107,16 +110,23 @@ button, label { -webkit-tap-highlight-color: transparent; }
 .scene-settings__copy strong { color: #dfe4ed; font-size: 10px; font-weight: 520; }
 .scene-settings__copy small { color: #757c8a; font-size: 8px; line-height: 1.3; }
 .scene-settings__row--labels { display: grid; align-items: stretch; gap: 9px; }
-.label-mode-switch {
+.scene-settings__row--clusters { margin-top: 6px; }
+.label-mode-switch,
+.cluster-depth-switch {
   display: grid;
-  grid-template-columns: 0.8fr 1.25fr 0.8fr;
   gap: 2px;
   padding: 2px;
   border: 1px solid rgba(184, 194, 222, 0.08);
   border-radius: 8px;
   background: rgba(3, 5, 14, 0.48);
 }
-.label-mode-switch button {
+.label-mode-switch { grid-template-columns: 0.8fr 1.25fr 0.8fr; }
+.cluster-depth-switch {
+  grid-template-columns: repeat(3, 25px);
+  flex: 0 0 auto;
+}
+.label-mode-switch button,
+.cluster-depth-switch button {
   min-width: 0;
   height: 25px;
   padding: 0 5px;
@@ -129,10 +139,14 @@ button, label { -webkit-tap-highlight-color: transparent; }
   white-space: nowrap;
   transition: color 160ms ease, background 160ms ease, transform 120ms ease;
 }
-.label-mode-switch button:hover { color: #d8dde6; }
-.label-mode-switch button.is-active { color: #efbadb; background: rgba(185, 123, 160, 0.15); }
-.label-mode-switch button:active { transform: translateY(1px); }
-.label-mode-switch button:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: -1px; }
+.label-mode-switch button:hover,
+.cluster-depth-switch button:hover { color: #d8dde6; }
+.label-mode-switch button.is-active,
+.cluster-depth-switch button.is-active { color: #efbadb; background: rgba(185, 123, 160, 0.15); }
+.label-mode-switch button:active,
+.cluster-depth-switch button:active { transform: translateY(1px); }
+.label-mode-switch button:focus-visible,
+.cluster-depth-switch button:focus-visible { outline: 1px solid rgba(240, 139, 215, 0.72); outline-offset: -1px; }
 .scene-settings__actions { display: grid; gap: 3px; margin-top: 6px; }
 .scene-menu-action {
   width: 100%;

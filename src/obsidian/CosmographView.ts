@@ -77,6 +77,14 @@ function viewMarkup() {
               <button type="button" data-label-mode="all" aria-pressed="false">Все</button>
             </div>
           </div>
+          <div class="scene-settings__row scene-settings__row--clusters">
+            <span class="scene-settings__copy"><strong>Глубина кластеров</strong><small>Насколько дробить папки</small></span>
+            <div class="cluster-depth-switch" role="group" aria-label="Глубина папок для кластеров">
+              <button type="button" data-group-depth="1" aria-label="Один уровень папок" aria-pressed="true" class="is-active">1</button>
+              <button type="button" data-group-depth="2" aria-label="Два уровня папок" aria-pressed="false">2</button>
+              <button type="button" data-group-depth="3" aria-label="Три уровня папок" aria-pressed="false">3</button>
+            </div>
+          </div>
           <div class="scene-settings__actions">
             <button class="scene-menu-action" id="immersive-toggle" type="button" aria-pressed="false">
               <span><strong>Сцена</strong><small id="immersive-state">Скрыть интерфейс</small></span>
@@ -227,6 +235,7 @@ export class CosmographView extends ItemView {
   applySettings() {
     this.setSphereStyle(this.plugin.preferences.sphereStyle, false);
     this.setLabelMode(this.plugin.preferences.labelMode, false);
+    this.setGroupDepth(this.plugin.preferences.groupDepth, false);
   }
 
   refreshGraph() {
@@ -264,6 +273,7 @@ export class CosmographView extends ItemView {
     const sceneSettingsTrigger = this.find<HTMLButtonElement>("#scene-settings-trigger");
     const sceneSettingsMenu = this.find<HTMLElement>("#scene-settings-menu");
     const labelModeButtons = this.findAll<HTMLButtonElement>("[data-label-mode]");
+    const groupDepthButtons = this.findAll<HTMLButtonElement>("[data-group-depth]");
     const sphereStyleButtons = this.findAll<HTMLButtonElement>("[data-sphere-style]");
 
     searchInput.addEventListener("input", () => this.graph?.setSearch(searchInput.value));
@@ -281,6 +291,9 @@ export class CosmographView extends ItemView {
     sceneSettingsTrigger.addEventListener("click", () => this.setSettingsOpen(sceneSettingsMenu.hidden));
     labelModeButtons.forEach((button) => button.addEventListener("click", () => {
       this.setLabelMode(button.dataset.labelMode as LabelMode, true);
+    }));
+    groupDepthButtons.forEach((button) => button.addEventListener("click", () => {
+      this.setGroupDepth(Number(button.dataset.groupDepth), true);
     }));
     this.shadow?.addEventListener("pointerdown", (event) => {
       if (!sceneSettingsMenu.hidden && event.target instanceof Node && !sceneSettings.contains(event.target)) {
@@ -445,6 +458,20 @@ export class CosmographView extends ItemView {
     if (persist) {
       this.plugin.preferences.labelMode = mode;
       void this.plugin.saveSettings();
+    }
+  }
+
+  private setGroupDepth(depth: number, persist: boolean) {
+    const normalizedDepth = Math.min(3, Math.max(1, Math.trunc(depth) || 1));
+    this.findAll<HTMLButtonElement>("[data-group-depth]").forEach((button) => {
+      const active = Number(button.dataset.groupDepth) === normalizedDepth;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    if (persist && this.plugin.preferences.groupDepth !== normalizedDepth) {
+      this.plugin.preferences.groupDepth = normalizedDepth;
+      void this.plugin.saveSettings();
+      this.refreshGraph();
     }
   }
 
