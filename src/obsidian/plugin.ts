@@ -58,6 +58,10 @@ export default class CosmographPlugin extends Plugin implements SettingsControll
     this.getOpenViews().forEach((view) => view.applySettings());
   }
 
+  rebuildViews() {
+    this.getOpenViews().forEach((view) => view.refreshGraph());
+  }
+
   private getOpenViews() {
     return this.app.workspace.getLeavesOfType(VIEW_TYPE_COSMOGRAPH)
       .map((leaf) => leaf.view)

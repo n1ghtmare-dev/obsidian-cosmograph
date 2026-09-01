@@ -271,7 +271,8 @@ function createNodeMarkerTexture(size = 192) {
 }
 
 function displayGroupName(value: string) {
-  return value.replace(/^\d+[.]?\s*/, "") || "Заметки";
+  const leaf = value.split("/").at(-1) ?? value;
+  return leaf.replace(/^\d+[.]?\s*/, "") || "Заметки";
 }
 
 export class SphericalGraph {

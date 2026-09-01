@@ -235,7 +235,7 @@ export class CosmographView extends ItemView {
     loadingState.hidden = false;
     window.requestAnimationFrame(() => {
       try {
-        this.currentGraph = buildVaultGraph(this.app);
+        this.currentGraph = buildVaultGraph(this.app, this.plugin.preferences.groupDepth);
         this.graph?.setData(this.currentGraph);
         this.renderGroupList();
         const status = `${this.currentGraph.nodes.length} заметок · ${this.currentGraph.edges.length} связей`;
