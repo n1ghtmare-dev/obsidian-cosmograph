@@ -4,6 +4,15 @@ import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import {
+  buildNoteAdjacency,
+  focusDistances,
+  focusedNoteCount,
+  normalizeFocusDepth,
+  type FocusDepth,
+  type NoteAdjacency,
+} from "./focus";
+import { performanceProfileFor, sampleEvenly, type PerformanceProfile, type PerformanceTier } from "./performance";
 import type { GraphData, GraphNode } from "../types";
 
 type SelectHandler = (node: GraphNode | null) => void;
@@ -24,6 +33,23 @@ type NodeVisual = {
   baseScale: number;
   calmColor: THREE.Color;
   radiantColor: THREE.Color;
+};
+
+type BatchedLabel = {
+  node: GraphNode;
+  object: CSS2DObject;
+  important: boolean;
+  base: boolean;
+};
+
+type BatchedNodeCloud = {
+  points: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  nodes: GraphNode[];
+  indexById: Map<string, number>;
+  calmColors: THREE.BufferAttribute;
+  radiantColors: THREE.BufferAttribute;
+  visibility: THREE.BufferAttribute;
+  scale: THREE.BufferAttribute;
 };
 
 const SPHERE_RADIUS = 3.66;
@@ -234,6 +260,301 @@ function createGlowTexture(size = 128) {
   return texture;
 }
 
+function createCosmicBackgroundTexture(width: number, height: number) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d")!;
+  const random = seededRandom(0x5ca1ab1e);
+
+  const clamp = (value: number, minimum = 0, maximum = 1) => Math.max(minimum, Math.min(maximum, value));
+  const smoothstep = (value: number) => value * value * (3 - 2 * value);
+  const noiseHash = (x: number, y: number) => {
+    let value = Math.imul(x, 374761393) + Math.imul(y, 668265263) + 0x5ca1ab1e;
+    value = Math.imul(value ^ (value >>> 13), 1274126177);
+    return ((value ^ (value >>> 16)) >>> 0) / 4294967296;
+  };
+  const valueNoise = (x: number, y: number) => {
+    const x0 = Math.floor(x);
+    const y0 = Math.floor(y);
+    const tx = smoothstep(x - x0);
+    const ty = smoothstep(y - y0);
+    const top = noiseHash(x0, y0) * (1 - tx) + noiseHash(x0 + 1, y0) * tx;
+    const bottom = noiseHash(x0, y0 + 1) * (1 - tx) + noiseHash(x0 + 1, y0 + 1) * tx;
+    return top * (1 - ty) + bottom * ty;
+  };
+  const fractalNoise = (x: number, y: number) => {
+    let amplitude = 0.55;
+    let frequency = 1;
+    let total = 0;
+    let normalization = 0;
+    for (let octave = 0; octave < 5; octave += 1) {
+      total += valueNoise(x * frequency, y * frequency) * amplitude;
+      normalization += amplitude;
+      amplitude *= 0.52;
+      frequency *= 2.03;
+    }
+    return total / normalization;
+  };
+
+  const base = context.createLinearGradient(0, 0, width, height);
+  base.addColorStop(0, "#010416");
+  base.addColorStop(0.34, "#020824");
+  base.addColorStop(0.68, "#050526");
+  base.addColorStop(1, "#01020d");
+  context.fillStyle = base;
+  context.fillRect(0, 0, width, height);
+
+  const paintGlow = (
+    x: number,
+    y: number,
+    radiusX: number,
+    radiusY: number,
+    core: string,
+    fringe: string,
+    opacity: number,
+  ) => {
+    context.save();
+    context.translate(x, y);
+    context.scale(radiusX, radiusY);
+    context.globalCompositeOperation = "screen";
+    context.globalAlpha = opacity;
+    const glow = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+    glow.addColorStop(0, core);
+    glow.addColorStop(0.32, fringe);
+    glow.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = glow;
+    context.fillRect(-1, -1, 2, 2);
+    context.restore();
+  };
+
+  paintGlow(width * 0.02, height * 0.72, width * 0.52, height * 0.56, "rgba(30,107,255,.74)", "rgba(13,34,129,.3)", 0.82);
+  paintGlow(width * 0.98, height * 0.27, width * 0.5, height * 0.48, "rgba(54,105,255,.68)", "rgba(43,31,145,.28)", 0.78);
+  paintGlow(width * 0.88, height * 0.58, width * 0.34, height * 0.32, "rgba(242,56,221,.58)", "rgba(98,32,159,.22)", 0.64);
+  paintGlow(width * 0.34, height * 0.03, width * 0.5, height * 0.3, "rgba(40,123,255,.58)", "rgba(29,44,145,.22)", 0.72);
+
+  // A low-resolution fractal cloud layer produces fine structure without storing
+  // a large image asset or adding work to the animation loop.
+  const cloudCanvas = document.createElement("canvas");
+  cloudCanvas.width = Math.max(260, Math.min(480, Math.round(width * 0.3)));
+  cloudCanvas.height = Math.max(150, Math.min(300, Math.round(height * 0.3)));
+  const cloudContext = cloudCanvas.getContext("2d")!;
+  const cloudImage = cloudContext.createImageData(cloudCanvas.width, cloudCanvas.height);
+  for (let y = 0; y < cloudCanvas.height; y += 1) {
+    for (let x = 0; x < cloudCanvas.width; x += 1) {
+      const u = x / Math.max(cloudCanvas.width - 1, 1);
+      const v = y / Math.max(cloudCanvas.height - 1, 1);
+      const coarse = fractalNoise(u * 4.3 + 11.2, v * 4.3 + 3.7);
+      const detail = fractalNoise(u * 10.7 + 31.6, v * 10.7 + 17.4);
+      const ridges = Math.pow(1 - Math.abs(detail * 2 - 1), 3.1);
+      const sweepCenter = 0.91 - u * 0.66 + Math.sin(u * 12.4) * 0.045;
+      const sweep = Math.exp(-Math.pow((v - sweepCenter) / 0.18, 2));
+      const upperVeil = Math.exp(-Math.pow((v - (0.06 + u * 0.13)) / 0.21, 2)) * (1 - u * 0.32);
+      const rightCloud = Math.exp(-Math.pow((u - 0.88) / 0.2, 2) - Math.pow((v - 0.56) / 0.3, 2));
+      const leftCloud = Math.exp(-Math.pow((u - 0.08) / 0.24, 2) - Math.pow((v - 0.48) / 0.38, 2));
+      const field = clamp(sweep * 0.94 + upperVeil * 0.52 + rightCloud * 0.76 + leftCloud * 0.58);
+      const cloud = clamp((coarse - 0.3) * 1.9) * field;
+      const filament = clamp((ridges - 0.43) * 2.5) * field * (0.35 + cloud * 0.75);
+      const density = clamp(cloud * 0.68 + filament * 0.62);
+      const magenta = clamp(rightCloud * 0.86 + sweep * (0.28 + 0.28 * Math.sin(u * 13.5 + v * 4.2)));
+      const offset = (y * cloudCanvas.width + x) * 4;
+      cloudImage.data[offset] = Math.round(21 + density * 62 + magenta * 71);
+      cloudImage.data[offset + 1] = Math.round(48 + density * 63 + (1 - magenta) * 24);
+      cloudImage.data[offset + 2] = Math.round(132 + density * 108 + magenta * 39);
+      cloudImage.data[offset + 3] = Math.round(density * 194);
+    }
+  }
+  cloudContext.putImageData(cloudImage, 0, 0);
+  context.save();
+  context.globalCompositeOperation = "screen";
+  context.globalAlpha = 0.58;
+  context.filter = `blur(${Math.max(7, Math.round(width / 190))}px)`;
+  context.drawImage(cloudCanvas, -width * 0.015, -height * 0.015, width * 1.03, height * 1.03);
+  context.globalAlpha = 0.92;
+  context.filter = "none";
+  context.drawImage(cloudCanvas, 0, 0, width, height);
+  context.restore();
+
+  const paintWisp = (
+    points: [[number, number], [number, number], [number, number], [number, number]],
+    color: string,
+    thickness: number,
+    opacity: number,
+  ) => {
+    context.save();
+    context.globalCompositeOperation = "screen";
+    context.lineCap = "round";
+    for (let layer = 5; layer >= 1; layer -= 1) {
+      const offset = (random() - 0.5) * thickness * 1.9;
+      context.beginPath();
+      context.moveTo(points[0][0], points[0][1] + offset);
+      context.bezierCurveTo(
+        points[1][0], points[1][1] + offset,
+        points[2][0], points[2][1] - offset * 0.4,
+        points[3][0], points[3][1] - offset * 0.2,
+      );
+      context.strokeStyle = color;
+      context.globalAlpha = opacity / (5.2 + layer * 1.4);
+      context.lineWidth = thickness * (1.8 + layer * 2.15);
+      context.shadowColor = color;
+      context.shadowBlur = thickness * (2.2 + layer * 2.35);
+      context.stroke();
+    }
+    context.restore();
+  };
+
+  paintWisp(
+    [[-width * 0.08, height * 0.86], [width * 0.16, height * 0.62], [width * 0.27, height * 0.98], [width * 0.5, height * 0.77]],
+    "rgba(73,153,255,.9)",
+    Math.max(1.6, width * 0.0017),
+    0.46,
+  );
+  paintWisp(
+    [[width * 0.63, height * 0.88], [width * 0.74, height * 0.62], [width * 0.78, height * 0.36], [width * 1.08, height * 0.43]],
+    "rgba(242,72,225,.86)",
+    Math.max(1.5, width * 0.00155),
+    0.4,
+  );
+  paintWisp(
+    [[width * 0.15, -height * 0.07], [width * 0.27, height * 0.18], [width * 0.48, -height * 0.04], [width * 0.64, height * 0.17]],
+    "rgba(64,135,255,.72)",
+    Math.max(1.35, width * 0.0013),
+    0.32,
+  );
+
+  const paintGalaxy = (
+    x: number,
+    y: number,
+    radiusX: number,
+    radiusY: number,
+    rotation: number,
+    hue: "blue" | "violet",
+    seed: number,
+  ) => {
+    const galaxyRandom = seededRandom(seed);
+    const cool = hue === "blue";
+    context.save();
+    context.translate(x, y);
+    context.rotate(rotation);
+    context.scale(radiusX, radiusY);
+    context.globalCompositeOperation = "screen";
+
+    const halo = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+    halo.addColorStop(0, cool ? "rgba(255,246,226,.98)" : "rgba(255,231,248,.96)");
+    halo.addColorStop(0.06, cool ? "rgba(205,229,255,.9)" : "rgba(255,184,244,.82)");
+    halo.addColorStop(0.2, cool ? "rgba(80,158,255,.52)" : "rgba(210,96,255,.52)");
+    halo.addColorStop(0.55, cool ? "rgba(33,78,212,.2)" : "rgba(111,49,201,.2)");
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = halo;
+    context.fillRect(-1, -1, 2, 2);
+    context.restore();
+
+    context.save();
+    context.globalCompositeOperation = "screen";
+    const cosine = Math.cos(rotation);
+    const sine = Math.sin(rotation);
+    const particleCount = Math.round(620 + (radiusX / width) * 1900);
+    for (let index = 0; index < particleCount; index += 1) {
+      const progress = Math.pow(galaxyRandom(), 0.72);
+      const arm = index % 4;
+      const angle = arm * Math.PI * 0.5
+        + progress * Math.PI * 3.9
+        + (galaxyRandom() - galaxyRandom()) * (0.12 + progress * 0.28);
+      const radius = 0.035 + progress * 0.91;
+      const spread = (galaxyRandom() - galaxyRandom()) * (0.028 + progress * 0.055);
+      const localX = Math.cos(angle) * radius * radiusX;
+      const localY = (Math.sin(angle) * radius + spread) * radiusY;
+      const px = x + localX * cosine - localY * sine;
+      const py = y + localX * sine + localY * cosine;
+      const alpha = (0.1 + galaxyRandom() * 0.48) * (1 - progress * 0.52);
+      const particleRadius = Math.max(0.26, (0.28 + galaxyRandom() * 0.9) * width / 1600);
+      context.fillStyle = cool
+        ? `rgba(${150 + Math.round(galaxyRandom() * 85)},${190 + Math.round(galaxyRandom() * 60)},255,${alpha})`
+        : `rgba(255,${145 + Math.round(galaxyRandom() * 85)},${224 + Math.round(galaxyRandom() * 31)},${alpha})`;
+      context.beginPath();
+      context.arc(px, py, particleRadius, 0, Math.PI * 2);
+      context.fill();
+    }
+
+    const core = context.createRadialGradient(x, y, 0, x, y, Math.max(2, radiusY * 0.34));
+    core.addColorStop(0, "rgba(255,252,238,.98)");
+    core.addColorStop(0.1, cool ? "rgba(211,229,255,.9)" : "rgba(255,198,243,.9)");
+    core.addColorStop(0.38, cool ? "rgba(82,153,255,.38)" : "rgba(220,89,255,.38)");
+    core.addColorStop(1, "rgba(0,0,0,0)");
+    context.fillStyle = core;
+    context.fillRect(x - radiusY, y - radiusY, radiusY * 2, radiusY * 2);
+    context.restore();
+  };
+
+  paintGalaxy(width * 0.91, height * 0.28, width * 0.13, height * 0.073, -0.48, "blue", 0x41a7b3);
+  paintGalaxy(width * 0.12, height * 0.82, width * 0.115, height * 0.067, 0.31, "violet", 0x93f14d);
+
+  context.globalCompositeOperation = "screen";
+  const starCount = Math.round(920 + Math.sqrt(width * height) * 0.72);
+  for (let index = 0; index < starCount; index += 1) {
+    const x = random() * width;
+    const y = random() * height;
+    const bright = random() > 0.973;
+    const radius = bright ? 0.8 + random() * 1.75 : 0.2 + Math.pow(random(), 4) * 0.78;
+    const alpha = bright ? 0.66 + random() * 0.3 : 0.14 + random() * 0.55;
+    const temperature = random();
+    context.fillStyle = temperature > 0.25
+      ? `rgba(177,215,255,${alpha})`
+      : temperature > 0.08
+        ? `rgba(239,244,255,${alpha})`
+        : `rgba(255,190,238,${alpha * 0.82})`;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+    if (!bright) continue;
+    const halo = context.createRadialGradient(x, y, 0, x, y, radius * 7.5);
+    halo.addColorStop(0, `rgba(214,234,255,${alpha * 0.42})`);
+    halo.addColorStop(1, "rgba(120,165,255,0)");
+    context.fillStyle = halo;
+    context.fillRect(x - radius * 8, y - radius * 8, radius * 16, radius * 16);
+    context.strokeStyle = `rgba(194,222,255,${alpha * 0.44})`;
+    context.lineWidth = Math.max(0.45, width / 2600);
+    context.beginPath();
+    context.moveTo(x - radius * 6.8, y);
+    context.lineTo(x + radius * 6.8, y);
+    context.moveTo(x, y - radius * 6.8);
+    context.lineTo(x, y + radius * 6.8);
+    context.stroke();
+  }
+
+  // Dense dust-lane stars make the blue/magenta sweep read as a real Milky Way band.
+  for (let index = 0; index < 720; index += 1) {
+    const progress = random();
+    const x = progress * width;
+    const centerY = height * (0.91 - progress * 0.66 + Math.sin(progress * 12.4) * 0.045);
+    const y = centerY + (random() - random()) * height * 0.17;
+    const alpha = 0.13 + random() * 0.47;
+    const radius = 0.18 + Math.pow(random(), 3.4) * 0.72;
+    context.fillStyle = random() > 0.18
+      ? `rgba(173,215,255,${alpha})`
+      : `rgba(255,169,240,${alpha * 0.82})`;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const vignette = context.createRadialGradient(width * 0.5, height * 0.48, height * 0.08, width * 0.5, height * 0.48, Math.max(width, height) * 0.72);
+  vignette.addColorStop(0, "rgba(0,0,0,0)");
+  vignette.addColorStop(0.66, "rgba(0,0,8,.04)");
+  vignette.addColorStop(1, "rgba(0,0,8,.42)");
+  context.globalCompositeOperation = "source-over";
+  context.fillStyle = vignette;
+  context.fillRect(0, 0, width, height);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.generateMipmaps = false;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.name = "CosmoGraph cosmic background";
+  return texture;
+}
+
 function createNodeMarkerTexture(size = 192) {
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -299,14 +620,31 @@ export class SphericalGraph {
   private atmosphere!: THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
   private calmAtmosphereMaterial!: THREE.ShaderMaterial;
   private radiantAtmosphereMaterial!: THREE.ShaderMaterial;
+  private outerAura!: THREE.Mesh<THREE.BufferGeometry, THREE.ShaderMaterial>;
+  private outerAuraMaterial!: THREE.ShaderMaterial;
   private orbitingMotes!: THREE.Points<THREE.BufferGeometry, THREE.ShaderMaterial>;
   private orbitingMoteCalmColors!: THREE.BufferAttribute;
   private orbitingMoteRadiantColors!: THREE.BufferAttribute;
   private sphereStyle: SphereStyle = "radiant";
   private labelMode: LabelMode = "important";
   private readonly nodeVisuals: NodeVisual[] = [];
+  private batchedNodeCloud: BatchedNodeCloud | null = null;
+  private readonly batchedLabels = new Map<string, BatchedLabel>();
+  private readonly virtualLabelIds = new Set<string>();
+  private performanceProfile: PerformanceProfile = performanceProfileFor(0);
   private readonly hitMeshes: THREE.Mesh[] = [];
   private readonly degrees = new Map<string, number>();
+  private readonly nodesById = new Map<string, GraphNode>();
+  private currentData: GraphData = { nodes: [], edges: [] };
+  private noteAdjacency: NoteAdjacency = new Map();
+  private readonly nodePositions = new Map<string, THREE.Vector3>();
+  private readonly radiantColorsByGroup = new Map<string, number>();
+  private readonly calmColorsByGroup = new Map<string, number>();
+  private focusLineRoot = new THREE.Group();
+  private graphLineMaterial: THREE.LineBasicMaterial | null = null;
+  private focusedId: string | null = null;
+  private focusDepth: FocusDepth = 1;
+  private focusNodeDistances = new Map<string, number>();
   private readonly tempWorld = new THREE.Vector3();
   private readonly tempNormal = new THREE.Vector3();
   private readonly tempCameraDirection = new THREE.Vector3();
@@ -326,7 +664,18 @@ export class SphericalGraph {
   private focusElapsed = 0;
   private focusDuration = 0;
   private focusing = false;
+  private cameraTweening = false;
+  private cameraTweenStart = 12;
+  private cameraTweenEnd = 12;
+  private cameraTweenElapsed = 0;
+  private cameraTweenDuration = 0.8;
+  private defaultCameraZ = 12;
   private animationFrame = 0;
+  private frameAccumulator = 0;
+  private labelRefreshAccumulator = 0;
+  private cosmicBackgroundEnabled = false;
+  private cosmicBackgroundTexture: THREE.CanvasTexture | null = null;
+  private cosmicBackgroundAspect = 0;
   private resizeObserver: ResizeObserver;
   private onSelect: SelectHandler = () => undefined;
   private onHover: HoverHandler = () => undefined;
@@ -343,6 +692,7 @@ export class SphericalGraph {
     this.renderer.toneMappingExposure = 0.96;
     this.renderer.setClearColor(0x02020b, 1);
     this.camera.position.set(0, 0, 12);
+    this.raycaster.params.Points = { threshold: 0.14 };
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
@@ -361,6 +711,8 @@ export class SphericalGraph {
     this.scene.add(this.root);
     this.terrainSurface = this.createTerrainSurface();
     this.atmosphere = this.createAtmosphere();
+    this.outerAura = this.createOuterAura();
+    this.root.add(this.outerAura);
     this.root.add(this.terrainSurface);
     this.root.add(this.atmosphere);
     this.root.add(this.createShellDust());
@@ -387,13 +739,31 @@ export class SphericalGraph {
 
   setLabelMode(mode: LabelMode) {
     this.labelMode = mode;
-    const hidden = mode === "none";
+    const hidden = mode === "none" && !this.focusedId;
     this.labelRenderer.domElement.classList.toggle("is-hidden", hidden);
     this.labelRenderer.domElement.setAttribute("aria-hidden", String(hidden));
+    if (mode === "all") this.refreshVisibleBatchedLabels();
+    else {
+      this.virtualLabelIds.clear();
+      this.syncTransientBatchedLabels();
+    }
   }
 
   getPrimaryNode() {
     return this.primaryNode;
+  }
+
+  getPerformanceTier(): PerformanceTier {
+    return this.performanceProfile.tier;
+  }
+
+  setCosmicBackground(enabled: boolean) {
+    this.cosmicBackgroundEnabled = enabled;
+    if (!enabled) {
+      this.scene.background = null;
+      return;
+    }
+    this.refreshCosmicBackground();
   }
 
   setSphereStyle(style: SphereStyle) {
@@ -401,10 +771,12 @@ export class SphericalGraph {
     const radiant = style === "radiant";
     this.terrainSurface.material = radiant ? this.radiantSurfaceMaterial : this.calmSurfaceMaterial;
     this.atmosphere.material = radiant ? this.radiantAtmosphereMaterial : this.calmAtmosphereMaterial;
-    this.renderer.toneMappingExposure = radiant ? 0.96 : 0.97;
-    this.bloomPass.strength = radiant ? 0.82 : 0.86;
-    this.bloomPass.radius = radiant ? 0.5 : 0.46;
-    this.bloomPass.threshold = radiant ? 0.62 : 0.5;
+    this.renderer.toneMappingExposure = radiant ? 0.98 : 0.97;
+    const bloomScale = this.performanceProfile.tier === "massive" ? 0.7 : this.performanceProfile.tier === "balanced" ? 0.88 : 1;
+    this.bloomPass.strength = (radiant ? 0.92 : 0.86) * bloomScale;
+    this.bloomPass.radius = radiant ? 0.55 : 0.46;
+    this.bloomPass.threshold = radiant ? 0.56 : 0.5;
+    if (this.outerAuraMaterial) this.outerAuraMaterial.uniforms.uIntensity.value = radiant ? 0.68 : 0.12;
     this.styledPointClouds.forEach((entry) => {
       entry.points.geometry.setAttribute("color", radiant ? entry.radiantColors : entry.calmColors);
       entry.points.material.opacity = radiant ? entry.radiantOpacity : entry.calmOpacity;
@@ -417,7 +789,18 @@ export class SphericalGraph {
       this.orbitingMotes.material.uniforms.uPointSize.value = radiant ? 0.031 : 0.024;
       this.orbitingMotes.material.uniforms.uMotionScale.value = radiant ? 1 : 0.64;
     }
+    if (this.batchedNodeCloud) {
+      this.batchedNodeCloud.points.geometry.setAttribute(
+        "color",
+        radiant ? this.batchedNodeCloud.radiantColors : this.batchedNodeCloud.calmColors,
+      );
+      this.batchedNodeCloud.points.material.uniforms.uEnergy.value = radiant ? 1 : 0.78;
+    }
     this.applyNodePalette();
+    if (this.focusedId) {
+      const focusedNode = this.nodesById.get(this.focusedId);
+      if (focusedNode) this.updateFocusLines(focusedNode);
+    }
   }
 
   private applyNodePalette() {
@@ -435,12 +818,32 @@ export class SphericalGraph {
   }
 
   setData(data: GraphData) {
+    this.performanceProfile = performanceProfileFor(data.nodes.length);
+    const pixelRatio = Math.min(window.devicePixelRatio, this.performanceProfile.maxPixelRatio);
+    this.renderer.setPixelRatio(pixelRatio);
+    this.composer.setPixelRatio(pixelRatio);
+    this.currentData = data;
+    this.noteAdjacency = buildNoteAdjacency(data);
     this.selectedId = null;
     this.hoveredId = null;
     this.primaryNode = null;
+    this.focusedId = null;
+    this.focusNodeDistances.clear();
     this.focusing = false;
+    this.cameraTweening = false;
+    this.camera.position.z = this.defaultCameraZ;
     this.degrees.clear();
-    data.nodes.forEach((node) => this.degrees.set(node.id, 0));
+    this.nodesById.clear();
+    this.nodePositions.clear();
+    this.radiantColorsByGroup.clear();
+    this.calmColorsByGroup.clear();
+    this.batchedNodeCloud = null;
+    this.batchedLabels.clear();
+    this.virtualLabelIds.clear();
+    data.nodes.forEach((node) => {
+      this.degrees.set(node.id, 0);
+      this.nodesById.set(node.id, node);
+    });
     data.edges.forEach((edge) => {
       this.degrees.set(edge.source, (this.degrees.get(edge.source) ?? 0) + 1);
       this.degrees.set(edge.target, (this.degrees.get(edge.target) ?? 0) + 1);
@@ -470,6 +873,7 @@ export class SphericalGraph {
         kind: "cluster",
         noteCount: notes.length,
       };
+      this.nodesById.set(cluster.id, cluster);
       const radiantColor = groupIndex === 0
         ? RADIANT_PRIMARY_COLOR
         : RADIANT_NOTE_COLORS[(groupIndex - 1) % RADIANT_NOTE_COLORS.length];
@@ -496,13 +900,22 @@ export class SphericalGraph {
       });
     });
 
+    positions.forEach((position, id) => this.nodePositions.set(id, position.clone()));
+    radiantColorByGroup.forEach((color, group) => this.radiantColorsByGroup.set(group, color));
+    calmColorByGroup.forEach((color, group) => this.calmColorsByGroup.set(group, color));
+
     this.networkRoot.add(this.createAmbientNetwork());
-    this.networkRoot.add(this.createGraphLines(data, orderedGroups, clusterNodes, positions, radiantColorByGroup));
+    const graphLines = this.createGraphLines(data, orderedGroups, clusterNodes, positions, radiantColorByGroup);
+    this.graphLineMaterial = graphLines.material;
+    this.networkRoot.add(graphLines);
+    this.focusLineRoot = new THREE.Group();
+    this.focusLineRoot.renderOrder = 4;
+    this.networkRoot.add(this.focusLineRoot);
 
     const rankedNotes = [...data.nodes]
-      .sort((a, b) => (this.degrees.get(b.id) ?? 0) - (this.degrees.get(a.id) ?? 0))
-      .slice(0, Math.min(15, Math.max(8, Math.round(Math.sqrt(data.nodes.length) * 2.8))));
-    const importantLabelIds = new Set(rankedNotes.map((node) => node.id));
+      .sort((a, b) => (this.degrees.get(b.id) ?? 0) - (this.degrees.get(a.id) ?? 0));
+    const importantLabelCount = Math.min(15, Math.max(8, Math.round(Math.sqrt(data.nodes.length) * 2.8)));
+    const importantLabelIds = new Set(rankedNotes.slice(0, importantLabelCount).map((node) => node.id));
 
     clusterNodes.forEach((cluster, index) => {
       const visual = this.createNodeVisual(
@@ -524,36 +937,86 @@ export class SphericalGraph {
       }
     });
 
-    data.nodes.forEach((node) => {
-      const visual = this.createNodeVisual(
-        node,
-        positions.get(node.id)!,
-        radiantColorByGroup.get(node.group)!,
-        calmColorByGroup.get(node.group)!,
-        false,
-        importantLabelIds.has(node.id),
+    if (this.performanceProfile.batchedNotes) {
+      this.batchedNodeCloud = this.createBatchedNodeCloud(
+        data.nodes,
+        positions,
+        radiantColorByGroup,
+        calmColorByGroup,
+        rankedNotes,
+        importantLabelIds,
       );
-      this.nodeVisuals.push(visual);
-      this.networkRoot.add(visual.group);
-    });
+      this.networkRoot.add(this.batchedNodeCloud.points);
+    } else {
+      data.nodes.forEach((node) => {
+        const visual = this.createNodeVisual(
+          node,
+          positions.get(node.id)!,
+          radiantColorByGroup.get(node.group)!,
+          calmColorByGroup.get(node.group)!,
+          false,
+          importantLabelIds.has(node.id),
+        );
+        this.nodeVisuals.push(visual);
+        this.networkRoot.add(visual.group);
+      });
+    }
 
-    this.applyNodePalette();
+    this.setSphereStyle(this.sphereStyle);
+    if (this.labelMode === "all") this.refreshVisibleBatchedLabels();
     this.applyVisualState();
+    this.resize();
   }
 
   setSearch(value: string) {
     this.search = value.trim().toLocaleLowerCase();
+    if (this.labelMode === "all") this.refreshVisibleBatchedLabels();
+    this.applyVisualState();
+  }
+
+  setFocus(id: string, depth: number = this.focusDepth) {
+    const focusedNode = this.nodesById.get(id);
+    if (!focusedNode) return 0;
+    this.focusDepth = normalizeFocusDepth(depth);
+    this.focusedId = id;
+    this.virtualLabelIds.clear();
+    this.labelRenderer.domElement.classList.remove("is-hidden");
+    this.labelRenderer.domElement.setAttribute("aria-hidden", "false");
+    this.focusNodeDistances = focusDistances(this.currentData, focusedNode, this.focusDepth, this.noteAdjacency);
+    this.focusNode(id);
+    this.startCameraTween(this.canvas.clientWidth < 720 ? 18.8 : 10.45, 0.9);
+    this.updateFocusLines(focusedNode);
+    this.applyVisualState();
+    return focusedNoteCount(this.currentData, this.focusNodeDistances);
+  }
+
+  setFocusDepth(depth: number) {
+    if (!this.focusedId) return 0;
+    return this.setFocus(this.focusedId, depth);
+  }
+
+  clearFocus(clearSelection = false) {
+    this.focusedId = null;
+    this.focusNodeDistances.clear();
+    if (clearSelection) this.selectedId = null;
+    this.clearFocusLines();
+    if (this.graphLineMaterial) this.graphLineMaterial.opacity = 0.25;
+    const labelsHidden = this.labelMode === "none";
+    this.labelRenderer.domElement.classList.toggle("is-hidden", labelsHidden);
+    this.labelRenderer.domElement.setAttribute("aria-hidden", String(labelsHidden));
+    this.startCameraTween(this.defaultCameraZ, 0.76);
+    if (this.labelMode === "all") this.refreshVisibleBatchedLabels();
     this.applyVisualState();
   }
 
   focusNode(id: string) {
-    const visual = this.nodeVisuals.find((candidate) => candidate.node.id === id);
-    if (!visual) return;
+    const position = this.nodePositions.get(id);
+    if (!position) return;
     this.selectedId = id;
     this.autoRotate = false;
     this.velocityX = 0;
     this.velocityY = 0;
-    const localDirection = visual.group.position.clone().normalize();
+    const localDirection = position.clone().normalize();
     const desiredDirection = new THREE.Vector3(0.08, -0.02, 1).normalize();
     this.focusStart.copy(this.root.quaternion);
     this.focusEnd.setFromUnitVectors(localDirection, desiredDirection);
@@ -564,6 +1027,87 @@ export class SphericalGraph {
     this.focusing = !this.reducedMotion && turnAngle > 0.002;
     if (!this.focusing) this.root.quaternion.copy(this.focusEnd);
     this.applyVisualState();
+  }
+
+  private startCameraTween(target: number, duration: number) {
+    this.cameraTweenStart = this.camera.position.z;
+    this.cameraTweenEnd = target;
+    this.cameraTweenElapsed = 0;
+    this.cameraTweenDuration = duration;
+    this.cameraTweening = !this.reducedMotion && Math.abs(this.cameraTweenStart - target) > 0.01;
+    if (!this.cameraTweening) this.camera.position.z = target;
+  }
+
+  private clearFocusLines() {
+    this.focusLineRoot.traverse((object) => {
+      if (object === this.focusLineRoot) return;
+      const line = object as THREE.LineSegments;
+      line.geometry?.dispose();
+      if (Array.isArray(line.material)) line.material.forEach((material) => material.dispose());
+      else line.material?.dispose();
+    });
+    this.focusLineRoot.clear();
+  }
+
+  private updateFocusLines(focusedNode: GraphNode) {
+    this.clearFocusLines();
+    if (this.graphLineMaterial) this.graphLineMaterial.opacity = 0.055;
+
+    const linePositions: number[] = [];
+    const lineColors: number[] = [];
+    const addLine = (sourceId: string, targetId: string) => {
+      const source = this.nodePositions.get(sourceId);
+      const target = this.nodePositions.get(targetId);
+      const sourceNode = this.nodesById.get(sourceId);
+      const targetNode = this.nodesById.get(targetId);
+      if (!source || !target || !sourceNode || !targetNode) return;
+      const sourceDistance = this.focusNodeDistances.get(sourceId) ?? this.focusDepth;
+      const targetDistance = this.focusNodeDistances.get(targetId) ?? this.focusDepth;
+      const energy = 1 - Math.max(sourceDistance, targetDistance) * 0.16;
+      const colors = this.sphereStyle === "radiant" ? this.radiantColorsByGroup : this.calmColorsByGroup;
+      const fallback = this.sphereStyle === "radiant" ? RADIANT_PRIMARY_COLOR : CALM_PRIMARY_COLOR;
+      const sourceColor = new THREE.Color(colors.get(sourceNode.group) ?? fallback)
+        .lerp(NODE_HIGHLIGHT_COLOR, 0.28)
+        .multiplyScalar(energy);
+      const targetColor = new THREE.Color(colors.get(targetNode.group) ?? fallback)
+        .lerp(NODE_HIGHLIGHT_COLOR, 0.28)
+        .multiplyScalar(energy);
+      linePositions.push(source.x, source.y, source.z, target.x, target.y, target.z);
+      lineColors.push(sourceColor.r, sourceColor.g, sourceColor.b, targetColor.r, targetColor.g, targetColor.b);
+    };
+
+    const visitedEdges = new Set<string>();
+    for (const sourceId of this.focusNodeDistances.keys()) {
+      this.noteAdjacency.get(sourceId)?.forEach((targetId) => {
+        if (!this.focusNodeDistances.has(targetId)) return;
+        const edgeKey = sourceId < targetId ? `${sourceId}\u0000${targetId}` : `${targetId}\u0000${sourceId}`;
+        if (visitedEdges.has(edgeKey)) return;
+        visitedEdges.add(edgeKey);
+        addLine(sourceId, targetId);
+      });
+    }
+
+    if (focusedNode.kind === "cluster") {
+      this.currentData.nodes
+        .filter((node) => node.group === focusedNode.group && this.focusNodeDistances.get(node.id) === 1)
+        .forEach((node) => addLine(focusedNode.id, node.id));
+    } else {
+      const clusterId = `@cluster/${focusedNode.group}`;
+      if (this.focusNodeDistances.has(clusterId)) addLine(focusedNode.id, clusterId);
+    }
+
+    if (linePositions.length === 0) return;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(linePositions, 3));
+    geometry.setAttribute("color", new THREE.Float32BufferAttribute(lineColors, 3));
+    const material = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: this.sphereStyle === "radiant" ? 0.82 : 0.68,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+    });
+    this.focusLineRoot.add(new THREE.LineSegments(geometry, material));
   }
 
   private createStarfield() {
@@ -730,32 +1274,46 @@ export class SphericalGraph {
           float fold = fbm(direction * 3.6 + vec3(broad * 2.25, -broad * 1.4, broad * 1.8));
           float fine = fbm(direction * 7.8 + vec3(fold * 1.65));
 
-          float contourPhase = broad * 3.3 + fold * 1.15 + direction.y * 0.26 + direction.x * 0.12;
+          float contourPhase = broad * 3.65 + fold * 1.32 + direction.y * 0.29 + direction.x * 0.14;
           float contour = 1.0 - abs(fract(contourPhase) - 0.5) * 2.0;
-          float ribbons = smoothstep(0.48, 0.9, contour) * smoothstep(0.32, 0.78, fold);
-          float vein = smoothstep(0.68, 0.94, fine + contour * 0.18);
-          float reliefGlow = smoothstep(0.18, 0.72, vRidge + ribbons * 0.44);
+          float ribbons = smoothstep(0.42, 0.88, contour) * smoothstep(0.3, 0.76, fold);
+          float ribbonCore = pow(smoothstep(0.78, 0.995, contour), 1.9) * smoothstep(0.42, 0.86, fold);
+          float vein = smoothstep(0.67, 0.94, fine + contour * 0.19);
+          float filament = smoothstep(0.73, 0.97, fine + ribbonCore * 0.24) * smoothstep(0.45, 0.84, fold);
+          float reliefGlow = smoothstep(0.16, 0.7, vRidge + ribbons * 0.48);
 
           vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-          float facing = max(dot(normalize(vWorldNormal), viewDirection), 0.0);
-          float fresnel = pow(1.0 - facing, 2.45);
-          float light = 0.35 + max(dot(normalize(vWorldNormal), normalize(vec3(-0.36, 0.68, 0.94))), 0.0) * 0.65;
+          vec3 normalDirection = normalize(vWorldNormal);
+          vec3 lightDirection = normalize(vec3(-0.36, 0.68, 0.94));
+          float facing = max(dot(normalDirection, viewDirection), 0.0);
+          float fresnel = pow(1.0 - facing, 1.9);
+          float hardRim = pow(1.0 - facing, 5.4);
+          float lightFacing = max(dot(normalDirection, lightDirection), 0.0);
+          float light = 0.22 + lightFacing * 0.78;
+          vec3 halfVector = normalize(viewDirection + lightDirection);
+          float broadSheen = pow(max(dot(normalDirection, halfVector), 0.0), 4.5);
+          float sharpSheen = pow(max(dot(normalDirection, halfVector), 0.0), 22.0);
 
           float chroma = clamp(fbm(direction * 2.55 + vec3(-1.2, 2.4, 0.6)) * 1.25 - 0.12, 0.0, 1.0);
           vec3 coolFlow = mix(uElectricBlue, uCyan, smoothstep(0.2, 0.78, chroma));
           vec3 warmFlow = mix(uViolet, uMagenta, smoothstep(0.34, 0.76, fold));
           vec3 ribbonColor = mix(coolFlow, warmFlow, smoothstep(0.3, 0.7, broad + direction.x * 0.13));
+          vec3 rimColor = mix(uCyan, uMagenta, smoothstep(-0.55, 0.68, direction.y + broad * 0.5));
 
-          vec3 color = uDeepIndigo * (0.62 + light * 0.76);
-          color += mix(uElectricBlue, uViolet, chroma) * (0.09 + vElevation * 0.18 + broad * 0.12);
-          color += ribbonColor * ribbons * (0.4 + reliefGlow * 0.46);
+          vec3 color = uDeepIndigo * (0.46 + light * 0.58);
+          color += mix(uElectricBlue, uViolet, chroma) * (0.075 + vElevation * 0.16 + broad * 0.1);
+          color += ribbonColor * ribbons * (0.44 + reliefGlow * 0.42);
           color += mix(uCyan, uMagenta, broad) * vein * (0.12 + vRidge * 0.32);
-          color += mix(uCyan, uMagenta, fold) * fresnel * (0.28 + ribbons * 0.32);
+          color += mix(uHot, ribbonColor, 0.7) * ribbonCore * (0.2 + reliefGlow * 0.38);
+          color += mix(uCyan, uMagenta, fold) * filament * (0.12 + ribbonCore * 0.24);
+          color += rimColor * (fresnel * (0.27 + ribbons * 0.28) + hardRim * 0.58);
+          color += mix(uHot, uCyan, 0.46) * broadSheen * (0.045 + ribbons * 0.11);
+          color += uHot * sharpSheen * (0.12 + ribbonCore * 0.34);
 
-          float hotCore = pow(clamp(ribbons * 0.58 + vein * 0.18 + vRidge * 0.34, 0.0, 1.0), 7.0);
-          color = mix(color, uHot * 1.18 + ribbonColor * 0.28, hotCore * 0.24);
-          float alpha = 0.71 + vElevation * 0.07 + ribbons * 0.07 + fresnel * 0.08;
-          color = clamp(color, vec3(0.0), vec3(1.35));
+          float hotCore = pow(clamp(ribbonCore * 0.68 + filament * 0.16 + vRidge * 0.32, 0.0, 1.0), 7.1);
+          color = mix(color, uHot * 0.86 + ribbonColor * 0.78, hotCore * 0.24);
+          float alpha = 0.76 + vElevation * 0.05 + ribbons * 0.06 + fresnel * 0.105;
+          color = clamp(color, vec3(0.0), vec3(1.65));
           gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
         }
       `,
@@ -823,8 +1381,11 @@ export class SphericalGraph {
           vec3 magenta = vec3(1.0, 0.38, 0.82);
           vec3 rimColor = mix(cyan, violet, smoothstep(0.15, 0.78, vDirection.y * 0.5 + 0.5));
           rimColor = mix(rimColor, magenta, smoothstep(0.7, 0.96, hueNoise) * 0.58);
-          float energy = pow(rim, 1.65) * 0.52 + pow(rim, 4.8) * 0.72;
-          gl_FragColor = vec4(clamp(rimColor * energy, vec3(0.0), vec3(1.35)), clamp(rim * 0.17, 0.0, 1.0));
+          float edgeFlow = 0.84 + sin(dot(vDirection, vec3(8.0, 13.0, 5.0)) + uTime * 0.11) * 0.16;
+          float spark = smoothstep(0.84, 0.985, hueNoise) * pow(rim, 2.4);
+          float energy = (pow(rim, 1.4) * 0.62 + pow(rim, 4.8) * 0.94) * edgeFlow + spark * 0.46;
+          float alpha = rim * 0.22 + pow(rim, 5.2) * 0.12 + spark * 0.045;
+          gl_FragColor = vec4(clamp(rimColor * energy + vec3(0.84, 0.92, 1.0) * spark * 0.64, vec3(0.0), vec3(1.72)), clamp(alpha, 0.0, 0.42));
         }
       `,
     });
@@ -833,6 +1394,61 @@ export class SphericalGraph {
     atmosphere.scale.setScalar(1.012);
     atmosphere.renderOrder = -1;
     return atmosphere;
+  }
+
+  private createOuterAura() {
+    const geometry = this.createTerrainGeometry(96, 72);
+    this.outerAuraMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.BackSide,
+      uniforms: {
+        uTime: { value: 0 },
+        uIntensity: { value: 1 },
+      },
+      vertexShader: `
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        varying vec3 vDirection;
+        void main() {
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          vDirection = normalize(position);
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * viewMatrix * worldPosition;
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uIntensity;
+        varying vec3 vWorldNormal;
+        varying vec3 vWorldPosition;
+        varying vec3 vDirection;
+        void main() {
+          vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
+          float facing = abs(dot(normalize(vWorldNormal), viewDirection));
+          float rim = clamp(1.0 - facing, 0.0, 1.0);
+          float softEdge = pow(rim, 1.2);
+          float hotEdge = pow(rim, 5.0);
+          float flow = 0.5 + 0.5 * sin(vDirection.x * 13.0 + vDirection.y * 8.0 - vDirection.z * 11.0 + uTime * 0.075);
+          vec3 cyan = vec3(0.2, 0.7, 1.0);
+          vec3 violet = vec3(0.56, 0.25, 1.0);
+          vec3 magenta = vec3(1.0, 0.3, 0.82);
+          vec3 auraColor = mix(cyan, violet, smoothstep(-0.72, 0.5, vDirection.y));
+          auraColor = mix(auraColor, magenta, smoothstep(0.58, 0.96, flow) * 0.54);
+          float energy = (softEdge * 0.26 + hotEdge * 0.92) * (0.88 + flow * 0.18) * uIntensity;
+          float alpha = (softEdge * 0.08 + hotEdge * 0.18) * uIntensity;
+          gl_FragColor = vec4(auraColor * energy, clamp(alpha, 0.0, 0.3));
+        }
+      `,
+    });
+    this.animatedMaterials.push(this.outerAuraMaterial);
+    const aura = new THREE.Mesh(geometry, this.outerAuraMaterial);
+    aura.scale.setScalar(1.032);
+    aura.renderOrder = -4;
+    return aura;
   }
 
   private registerStyledPointCloud(
@@ -896,8 +1512,9 @@ export class SphericalGraph {
       depthWrite: false,
       blending: THREE.AdditiveBlending,
       alphaTest: 0.01,
+      toneMapped: false,
     }));
-    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.72, 0.82, 0.018, 0.02);
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.72, 0.9, 0.018, 0.024);
   }
 
   private createTerrainAccents() {
@@ -969,7 +1586,7 @@ export class SphericalGraph {
       alphaTest: 0.012,
       toneMapped: false,
     }));
-    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.9, 0.9, 0.034, 0.034);
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.88, 0.96, 0.032, 0.039);
   }
 
   private createInnerDust() {
@@ -1051,7 +1668,7 @@ export class SphericalGraph {
       alphaTest: 0.015,
       toneMapped: false,
     }));
-    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.9, 0.9, 0.032, 0.032);
+    return this.registerStyledPointCloud(points, calmAttribute, radiantAttribute, 0.86, 0.98, 0.03, 0.04);
   }
 
   private createOrbitingMotes() {
@@ -1121,7 +1738,7 @@ export class SphericalGraph {
         uTime: { value: 0 },
         uOpacity: { value: 0.88 },
         uPointSize: { value: 0.031 },
-        uPixelRatio: { value: Math.min(window.devicePixelRatio, 1.8) },
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, this.performanceProfile.maxPixelRatio) },
         uMotionScale: { value: 1 },
       },
       vertexShader: `
@@ -1287,7 +1904,7 @@ export class SphericalGraph {
     });
 
     const nodeById = new Map(data.nodes.map((node) => [node.id, node]));
-    data.edges.forEach((edge) => {
+    sampleEvenly(data.edges, this.performanceProfile.maxGraphEdges).forEach((edge) => {
       const source = positions.get(edge.source);
       const target = positions.get(edge.target);
       const sourceNode = nodeById.get(edge.source);
@@ -1308,6 +1925,257 @@ export class SphericalGraph {
     }));
     lines.userData.kind = "graph-lines";
     return lines;
+  }
+
+  private createBatchedNodeCloud(
+    nodes: GraphNode[],
+    positions: Map<string, THREE.Vector3>,
+    radiantColorsByGroup: Map<string, number>,
+    calmColorsByGroup: Map<string, number>,
+    rankedNodes: GraphNode[],
+    importantLabelIds: Set<string>,
+  ): BatchedNodeCloud {
+    const count = nodes.length;
+    const pointPositions = new Float32Array(count * 3);
+    const radiantColors = new Float32Array(count * 3);
+    const calmColors = new Float32Array(count * 3);
+    const radius = new Float32Array(count);
+    const visibility = new Float32Array(count).fill(1);
+    const scale = new Float32Array(count).fill(1);
+    const indexById = new Map<string, number>();
+
+    nodes.forEach((node, index) => {
+      const position = positions.get(node.id)!;
+      const radiantColor = new THREE.Color(radiantColorsByGroup.get(node.group) ?? RADIANT_PRIMARY_COLOR);
+      const calmColor = new THREE.Color(calmColorsByGroup.get(node.group) ?? CALM_PRIMARY_COLOR);
+      const degree = this.degrees.get(node.id) ?? 0;
+      const nodeRadius = 0.03 + Math.sqrt(Math.min(degree, 16)) * 0.018;
+      position.toArray(pointPositions, index * 3);
+      radiantColor.toArray(radiantColors, index * 3);
+      calmColor.toArray(calmColors, index * 3);
+      radius[index] = nodeRadius * 5.2 * this.performanceProfile.pointSizeScale;
+      indexById.set(node.id, index);
+    });
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(pointPositions, 3));
+    const radiantAttribute = new THREE.BufferAttribute(radiantColors, 3);
+    const calmAttribute = new THREE.BufferAttribute(calmColors, 3);
+    const visibilityAttribute = new THREE.BufferAttribute(visibility, 1);
+    const scaleAttribute = new THREE.BufferAttribute(scale, 1);
+    geometry.setAttribute("color", this.sphereStyle === "radiant" ? radiantAttribute : calmAttribute);
+    geometry.setAttribute("aRadius", new THREE.BufferAttribute(radius, 1));
+    geometry.setAttribute("aVisibility", visibilityAttribute);
+    geometry.setAttribute("aScale", scaleAttribute);
+
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uPixelRatio: { value: Math.min(window.devicePixelRatio, this.performanceProfile.maxPixelRatio) },
+        uViewportHeight: { value: Math.max(this.canvas.clientHeight, 1) },
+        uEnergy: { value: this.sphereStyle === "radiant" ? 1 : 0.78 },
+      },
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      vertexShader: `
+        uniform float uPixelRatio;
+        uniform float uViewportHeight;
+        attribute float aRadius;
+        attribute float aVisibility;
+        attribute float aScale;
+        varying vec3 vColor;
+        varying float vVisibility;
+
+        void main() {
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          float projectedSize = aRadius * uViewportHeight * uPixelRatio / (0.767 * max(1.0, -mvPosition.z));
+          gl_PointSize = clamp(projectedSize * aScale, 1.25, 54.0);
+          gl_Position = projectionMatrix * mvPosition;
+          vColor = color;
+          vVisibility = aVisibility;
+        }
+      `,
+      fragmentShader: `
+        uniform float uEnergy;
+        varying vec3 vColor;
+        varying float vVisibility;
+
+        void main() {
+          vec2 centered = gl_PointCoord * 2.0 - 1.0;
+          float distanceToCenter = length(centered);
+          if (distanceToCenter > 1.0) discard;
+          float halo = pow(max(0.0, 1.0 - distanceToCenter), 2.4);
+          float core = 1.0 - smoothstep(0.08, 0.34, distanceToCenter);
+          float ring = smoothstep(0.76, 0.58, distanceToCenter) * smoothstep(0.42, 0.58, distanceToCenter);
+          float alpha = (halo * 0.46 + core * 0.9 + ring * 0.2) * vVisibility;
+          vec3 color = vColor * (0.7 + halo * 0.75 + core * 1.45) * uEnergy;
+          gl_FragColor = vec4(color, alpha);
+        }
+      `,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.renderOrder = 3;
+    points.userData.kind = "batched-notes";
+
+    rankedNodes
+      .filter((node) => importantLabelIds.has(node.id))
+      .forEach((node) => this.ensureBatchedLabel(node, positions.get(node.id)!, true, true));
+
+    return {
+      points,
+      nodes,
+      indexById,
+      calmColors: calmAttribute,
+      radiantColors: radiantAttribute,
+      visibility: visibilityAttribute,
+      scale: scaleAttribute,
+    };
+  }
+
+  private ensureBatchedLabel(node: GraphNode, position: THREE.Vector3, important: boolean, base: boolean) {
+    const existing = this.batchedLabels.get(node.id);
+    if (existing) {
+      existing.important ||= important;
+      existing.base ||= base;
+      return existing;
+    }
+    const element = document.createElement("span");
+    element.className = "graph-label graph-label--batched";
+    element.textContent = node.title;
+    const object = new CSS2DObject(element);
+    object.position.copy(position);
+    object.center.set(0, 1.15);
+    this.networkRoot.add(object);
+    const entry: BatchedLabel = { node, object, important, base };
+    this.batchedLabels.set(node.id, entry);
+    return entry;
+  }
+
+  private nodeMatchesSearch(node: GraphNode) {
+    return !this.search
+      || node.title.toLocaleLowerCase().includes(this.search)
+      || node.path.toLocaleLowerCase().includes(this.search)
+      || node.group.toLocaleLowerCase().includes(this.search);
+  }
+
+  private syncTransientBatchedLabels() {
+    if (!this.batchedNodeCloud) return;
+    const requested = new Set<string>();
+    this.virtualLabelIds.forEach((id) => requested.add(id));
+    if (this.selectedId) requested.add(this.selectedId);
+    if (this.hoveredId) requested.add(this.hoveredId);
+
+    if (this.focusedId) {
+      let remaining = this.performanceProfile.focusLabelBudget;
+      for (const node of this.batchedNodeCloud.nodes) {
+        if (remaining <= 0) break;
+        if (!this.focusNodeDistances.has(node.id)) continue;
+        requested.add(node.id);
+        remaining -= 1;
+      }
+    }
+
+    if (this.search) {
+      let remaining = Math.min(80, this.performanceProfile.focusLabelBudget);
+      for (const node of this.batchedNodeCloud.nodes) {
+        if (remaining <= 0) break;
+        if (!this.nodeMatchesSearch(node)) continue;
+        requested.add(node.id);
+        remaining -= 1;
+      }
+    }
+
+    for (const [id, entry] of this.batchedLabels) {
+      if (entry.base || requested.has(id)) continue;
+      entry.object.removeFromParent();
+      entry.object.element.remove();
+      this.batchedLabels.delete(id);
+    }
+    requested.forEach((id) => {
+      const node = this.nodesById.get(id);
+      const position = this.nodePositions.get(id);
+      if (node && position && node.kind !== "cluster") this.ensureBatchedLabel(node, position, false, false);
+    });
+  }
+
+  private refreshVisibleBatchedLabels() {
+    const cloud = this.batchedNodeCloud;
+    this.virtualLabelIds.clear();
+    if (!cloud || this.labelMode !== "all" || this.focusedId || this.search) {
+      this.syncTransientBatchedLabels();
+      return;
+    }
+
+    this.root.updateMatrixWorld(true);
+    const frontFacing: string[] = [];
+    for (const node of cloud.nodes) {
+      const position = this.nodePositions.get(node.id);
+      if (!position) continue;
+      this.tempWorld.copy(position).applyMatrix4(this.root.matrixWorld);
+      this.tempNormal.copy(position).normalize().transformDirection(this.root.matrixWorld);
+      this.tempCameraDirection.copy(this.camera.position).sub(this.tempWorld).normalize();
+      if (this.tempNormal.dot(this.tempCameraDirection) > 0.08) frontFacing.push(node.id);
+    }
+    sampleEvenly(frontFacing, this.performanceProfile.baseLabelBudget)
+      .forEach((id) => this.virtualLabelIds.add(id));
+    this.syncTransientBatchedLabels();
+  }
+
+  private applyBatchedVisualState() {
+    const cloud = this.batchedNodeCloud;
+    if (!cloud) return;
+    cloud.nodes.forEach((node, index) => {
+      const matches = this.nodeMatchesSearch(node);
+      const selected = node.id === this.selectedId;
+      const hovered = node.id === this.hoveredId;
+      const focusDistance = this.focusedId ? this.focusNodeDistances.get(node.id) : undefined;
+      const inFocus = !this.focusedId || focusDistance !== undefined;
+      const focusVisibility = !this.focusedId
+        ? 1
+        : !inFocus
+          ? 0.022
+          : focusDistance === 0
+            ? 1
+            : Math.max(0.34, 1 - (focusDistance ?? 0) * 0.2);
+      const visibility = (matches ? 1 : 0.045) * focusVisibility;
+      const focusScale = focusDistance === 1 ? 1.14 : focusDistance === 2 ? 1.06 : 1;
+      cloud.visibility.setX(index, visibility);
+      cloud.scale.setX(index, selected ? 1.72 : hovered ? 1.36 : focusScale);
+    });
+    cloud.visibility.needsUpdate = true;
+    cloud.scale.needsUpdate = true;
+  }
+
+  private updateBatchedLabels() {
+    if (!this.batchedNodeCloud || this.labelMode === "none" && !this.focusedId) return;
+    this.root.updateMatrixWorld(true);
+    for (const entry of this.batchedLabels.values()) {
+      const { node, object, important } = entry;
+      const matches = this.nodeMatchesSearch(node);
+      const selected = node.id === this.selectedId;
+      const hovered = node.id === this.hoveredId;
+      const focusDistance = this.focusedId ? this.focusNodeDistances.get(node.id) : undefined;
+      const inFocus = !this.focusedId || focusDistance !== undefined;
+      object.getWorldPosition(this.tempWorld);
+      this.tempNormal.copy(object.position).normalize().transformDirection(this.root.matrixWorld);
+      this.tempCameraDirection.copy(this.camera.position).sub(this.tempWorld).normalize();
+      const facing = this.tempNormal.dot(this.tempCameraDirection);
+      const modeMatch = this.focusedId
+        ? inFocus
+        : this.labelMode === "all"
+          || (this.labelMode === "important" && (important || selected || hovered || Boolean(this.search && matches)));
+      const distanceOpacity = focusDistance === undefined ? 1 : Math.max(0.42, 1 - focusDistance * 0.2);
+      const opacity = modeMatch && matches
+        ? THREE.MathUtils.smoothstep(facing, -0.12, 0.34) * distanceOpacity
+        : 0;
+      const element = object.element;
+      element.classList.toggle("is-selected", selected);
+      element.classList.toggle("is-focus-neighbor", Boolean(this.focusedId && inFocus && !selected));
+      element.dataset.focusDistance = focusDistance === undefined ? "" : String(focusDistance);
+      element.style.opacity = String(opacity);
+      element.style.visibility = opacity < 0.06 ? "hidden" : "visible";
+    }
   }
 
   private createNodeVisual(
@@ -1445,39 +2313,58 @@ export class SphericalGraph {
   }
 
   private applyVisualState() {
+    this.syncTransientBatchedLabels();
     for (const visual of this.nodeVisuals) {
       const { node, group, label } = visual;
-      const matches = !this.search
-        || node.title.toLocaleLowerCase().includes(this.search)
-        || node.path.toLocaleLowerCase().includes(this.search)
-        || node.group.toLocaleLowerCase().includes(this.search);
+      const matches = this.nodeMatchesSearch(node);
       const selected = node.id === this.selectedId;
       const hovered = node.id === this.hoveredId;
-      group.userData.visualState = { matches, selected, hovered };
-      group.userData.targetScale = visual.baseScale * (selected ? 1.48 : hovered ? 1.25 : 1);
+      const focusDistance = this.focusedId ? this.focusNodeDistances.get(node.id) : undefined;
+      const inFocus = !this.focusedId || focusDistance !== undefined;
+      group.userData.visualState = { matches, selected, hovered, focusDistance, inFocus };
+      const focusScale = focusDistance === 1 ? 1.12 : focusDistance === 2 ? 1.05 : 1;
+      group.userData.targetScale = visual.baseScale * (selected ? 1.58 : hovered ? 1.25 : focusScale);
       if (label) {
         const element = label.element;
         element.classList.toggle("is-selected", selected);
+        element.classList.toggle("is-focus-neighbor", Boolean(this.focusedId && inFocus && !selected));
         element.dataset.searchMatch = matches ? "true" : "false";
+        element.dataset.focusDistance = focusDistance === undefined ? "" : String(focusDistance);
       }
     }
+    this.applyBatchedVisualState();
   }
 
   private updateNodeVisuals(elapsed: number, delta: number) {
     this.root.updateMatrixWorld(true);
     for (const visual of this.nodeVisuals) {
       const { node, group, core, inner, marker, glow, label } = visual;
-      const state = group.userData.visualState as { matches: boolean; selected: boolean; hovered: boolean } | undefined;
+      const state = group.userData.visualState as {
+        matches: boolean;
+        selected: boolean;
+        hovered: boolean;
+        focusDistance?: number;
+        inFocus: boolean;
+      } | undefined;
       const matches = state?.matches ?? true;
       const selected = state?.selected ?? false;
       const hovered = state?.hovered ?? false;
+      const focusDistance = state?.focusDistance;
+      const inFocus = state?.inFocus ?? true;
 
       group.getWorldPosition(this.tempWorld);
       this.tempNormal.copy(group.position).normalize().transformDirection(this.root.matrixWorld);
       this.tempCameraDirection.copy(this.camera.position).sub(this.tempWorld).normalize();
       const facing = this.tempNormal.dot(this.tempCameraDirection);
       const depth = 0.24 + THREE.MathUtils.smoothstep(facing, -0.42, 0.38) * 0.76;
-      const visibility = (matches ? 1 : 0.075) * depth;
+      const focusVisibility = !this.focusedId
+        ? 1
+        : !inFocus
+          ? 0.028
+          : focusDistance === 0
+            ? 1
+            : Math.max(0.36, 1 - (focusDistance ?? 0) * 0.2);
+      const visibility = (matches ? 1 : 0.075) * focusVisibility * depth;
       const isCluster = node.kind === "cluster";
       const radiant = this.sphereStyle === "radiant";
       const coreEnergy = radiant ? 1 : 0.9;
@@ -1496,18 +2383,23 @@ export class SphericalGraph {
 
       if (label) {
         const searchMatch = label.element.dataset.searchMatch !== "false";
-        const modeMatch = this.labelMode === "all"
-          || (this.labelMode === "important" && (
-            visual.importantLabel
-            || selected
-            || hovered
-            || (this.search.length > 0 && searchMatch)
-          ));
-        const opacity = modeMatch && searchMatch ? THREE.MathUtils.smoothstep(facing, -0.12, 0.34) : 0;
+        const modeMatch = this.focusedId
+          ? inFocus
+          : this.labelMode === "all"
+            || (this.labelMode === "important" && (
+              visual.importantLabel
+              || selected
+              || hovered
+              || (this.search.length > 0 && searchMatch)
+            ));
+        const opacity = modeMatch && searchMatch
+          ? THREE.MathUtils.smoothstep(facing, -0.12, 0.34) * focusVisibility
+          : 0;
         label.element.style.opacity = String(opacity);
         label.element.style.visibility = opacity < 0.06 ? "hidden" : "visible";
       }
     }
+    this.updateBatchedLabels();
   }
 
   private bindEvents() {
@@ -1535,8 +2427,7 @@ export class SphericalGraph {
         this.lastY = event.clientY;
       }
       this.updatePointer(event);
-      const hit = this.pickNode();
-      const node = hit?.userData.node as GraphNode | undefined;
+      const node = this.pickNode();
       const id = node?.id ?? null;
       if (id !== this.hoveredId) {
         this.hoveredId = id;
@@ -1550,13 +2441,11 @@ export class SphericalGraph {
       this.canvas.releasePointerCapture(event.pointerId);
       if (this.moved) return;
       this.updatePointer(event);
-      const hit = this.pickNode();
-      const node = hit?.userData.node as GraphNode | undefined;
+      const node = this.pickNode();
       if (node) {
         this.focusNode(node.id);
       } else {
-        this.selectedId = null;
-        this.applyVisualState();
+        this.clearFocus(true);
       }
       this.onSelect(node ?? null);
     });
@@ -1572,6 +2461,7 @@ export class SphericalGraph {
       this.camera.position.z = THREE.MathUtils.clamp(this.camera.position.z + event.deltaY * 0.007, 7.1, 26);
       this.autoRotate = false;
       this.focusing = false;
+      this.cameraTweening = false;
     }, { passive: false });
   }
 
@@ -1583,7 +2473,16 @@ export class SphericalGraph {
 
   private pickNode() {
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    return this.raycaster.intersectObjects(this.hitMeshes, false)[0]?.object as THREE.Mesh | undefined;
+    const targets: THREE.Object3D[] = [...this.hitMeshes];
+    if (this.batchedNodeCloud) targets.push(this.batchedNodeCloud.points);
+    for (const intersection of this.raycaster.intersectObjects(targets, false)) {
+      if (this.batchedNodeCloud && intersection.object === this.batchedNodeCloud.points && intersection.index !== undefined) {
+        return this.batchedNodeCloud.nodes[intersection.index] ?? null;
+      }
+      const node = intersection.object.userData.node as GraphNode | undefined;
+      if (node) return node;
+    }
+    return null;
   }
 
   private resize() {
@@ -1591,18 +2490,57 @@ export class SphericalGraph {
     const width = Math.max(parent.clientWidth, 1);
     const height = Math.max(parent.clientHeight, 1);
     this.camera.aspect = width / height;
-    this.camera.position.z = width < 720 ? 21.5 : 12;
+    this.defaultCameraZ = width < 720 ? 21.5 : 12;
+    this.camera.position.z = this.focusedId ? (width < 720 ? 18.8 : 10.45) : this.defaultCameraZ;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height, false);
     this.composer.setSize(width, height);
     this.labelRenderer.setSize(width, height);
     if (this.orbitingMotes) {
-      this.orbitingMotes.material.uniforms.uPixelRatio.value = Math.min(window.devicePixelRatio, 1.8);
+      this.orbitingMotes.material.uniforms.uPixelRatio.value = Math.min(
+        window.devicePixelRatio,
+        this.performanceProfile.maxPixelRatio,
+      );
     }
+    if (this.batchedNodeCloud) {
+      this.batchedNodeCloud.points.material.uniforms.uPixelRatio.value = Math.min(
+        window.devicePixelRatio,
+        this.performanceProfile.maxPixelRatio,
+      );
+      this.batchedNodeCloud.points.material.uniforms.uViewportHeight.value = height;
+    }
+    if (this.cosmicBackgroundEnabled) this.refreshCosmicBackground();
+  }
+
+  private refreshCosmicBackground() {
+    const parent = this.canvas.parentElement ?? this.canvas;
+    const width = Math.max(parent.clientWidth, 1);
+    const height = Math.max(parent.clientHeight, 1);
+    const aspect = width / height;
+    if (this.cosmicBackgroundTexture && Math.abs(aspect - this.cosmicBackgroundAspect) < 0.06) {
+      this.scene.background = this.cosmicBackgroundTexture;
+      return;
+    }
+
+    const longEdge = width < 720 ? 1024 : this.performanceProfile.tier === "full" ? 1600 : 1280;
+    const textureWidth = aspect >= 1 ? longEdge : Math.max(512, Math.round(longEdge * aspect));
+    const textureHeight = aspect >= 1 ? Math.max(512, Math.round(longEdge / aspect)) : longEdge;
+    this.cosmicBackgroundTexture?.dispose();
+    this.cosmicBackgroundTexture = createCosmicBackgroundTexture(textureWidth, textureHeight);
+    this.cosmicBackgroundAspect = aspect;
+    this.scene.background = this.cosmicBackgroundTexture;
   }
 
   private animate = () => {
-    const delta = Math.min(this.clock.getDelta(), 0.05);
+    const rawDelta = Math.min(this.clock.getDelta(), 0.05);
+    this.frameAccumulator += rawDelta;
+    const frameInterval = 1 / this.performanceProfile.targetFps;
+    if (this.frameAccumulator < frameInterval) {
+      this.animationFrame = window.requestAnimationFrame(this.animate);
+      return;
+    }
+    const delta = Math.min(this.frameAccumulator, 0.08);
+    this.frameAccumulator = 0;
     const elapsed = this.clock.elapsedTime;
     const materialTime = this.reducedMotion ? 0 : elapsed;
     this.animatedMaterials.forEach((material) => {
@@ -1629,9 +2567,23 @@ export class SphericalGraph {
         this.velocityY *= 0.92;
       }
     }
+    if (this.cameraTweening) {
+      this.cameraTweenElapsed = Math.min(this.cameraTweenElapsed + delta, this.cameraTweenDuration);
+      const progress = this.cameraTweenElapsed / this.cameraTweenDuration;
+      const eased = progress * progress * progress * (progress * (progress * 6 - 15) + 10);
+      this.camera.position.z = THREE.MathUtils.lerp(this.cameraTweenStart, this.cameraTweenEnd, eased);
+      if (progress >= 1) this.cameraTweening = false;
+    }
+    if (this.batchedNodeCloud && this.labelMode === "all" && !this.focusedId && !this.search) {
+      this.labelRefreshAccumulator += delta;
+      if (this.labelRefreshAccumulator >= 0.42) {
+        this.labelRefreshAccumulator = 0;
+        this.refreshVisibleBatchedLabels();
+      }
+    }
     this.updateNodeVisuals(elapsed, delta);
     this.composer.render();
-    if (this.labelMode !== "none") this.labelRenderer.render(this.scene, this.camera);
+    if (this.labelMode !== "none" || this.focusedId) this.labelRenderer.render(this.scene, this.camera);
     this.animationFrame = window.requestAnimationFrame(this.animate);
   };
 
@@ -1662,6 +2614,11 @@ export class SphericalGraph {
       else mesh.material?.dispose();
     });
     this.networkRoot.clear();
+    this.batchedLabels.clear();
+    this.virtualLabelIds.clear();
+    this.batchedNodeCloud = null;
+    this.focusLineRoot = new THREE.Group();
+    this.graphLineMaterial = null;
   }
 
   destroy() {
@@ -1671,6 +2628,7 @@ export class SphericalGraph {
     this.labelRenderer.domElement.remove();
     this.glowTexture.dispose();
     this.nodeMarkerTexture.dispose();
+    this.cosmicBackgroundTexture?.dispose();
     this.composer.dispose();
     this.renderer.dispose();
   }

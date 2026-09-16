@@ -1,6 +1,7 @@
 import { ItemView, TFile, WorkspaceLeaf } from "obsidian";
 import cosmographStyles from "../style.css";
 import { SphericalGraph, type LabelMode, type SphereStyle } from "../graph/SphericalGraph";
+import { buildGraphLookup, type GraphLookup } from "../graph/lookup";
 import type { GraphData, GraphNode } from "../types";
 import { buildVaultGraph } from "./vaultGraph";
 import type CosmographPlugin from "./plugin";
@@ -86,6 +87,10 @@ function viewMarkup() {
             </div>
           </div>
           <div class="scene-settings__actions">
+            <button class="scene-menu-action" id="cosmic-background-toggle" type="button" aria-pressed="false">
+              <span><strong>Космический фон</strong><small>Туманности и дальние галактики</small></span>
+              <span class="scene-menu-action__value">Включить</span>
+            </button>
             <button class="scene-menu-action" id="immersive-toggle" type="button" aria-pressed="false">
               <span><strong>Сцена</strong><small id="immersive-state">Скрыть интерфейс</small></span>
               <span class="scene-menu-action__value">Включить</span>
@@ -128,7 +133,16 @@ function viewMarkup() {
         </div>
         <h1 id="panel-title"></h1>
         <p class="panel-path" id="panel-path"></p>
+        <p class="panel-preview" id="panel-preview" hidden></p>
         <button class="panel-open" id="panel-open" type="button">Открыть заметку</button>
+        <div class="focus-controls" id="focus-controls">
+          <span class="focus-controls__copy"><strong>Окружение</strong><small id="focus-summary">Ближайшие связи заметки</small></span>
+          <div class="focus-depth-switch" role="group" aria-label="Глубина связей в фокусе">
+            <button type="button" data-focus-depth="1" aria-label="Один шаг связей" aria-pressed="true" class="is-active">1</button>
+            <button type="button" data-focus-depth="2" aria-label="Два шага связей" aria-pressed="false">2</button>
+            <button type="button" data-focus-depth="3" aria-label="Три шага связей" aria-pressed="false">3</button>
+          </div>
+        </div>
         <dl class="panel-meta">
           <div><dt id="metric-label-a">Входящие связи</dt><dd id="metric-value-a">0</dd></div>
           <div><dt id="metric-label-b">Исходящие связи</dt><dd id="metric-value-b">0</dd></div>
@@ -144,7 +158,7 @@ function viewMarkup() {
           <button type="button" data-sphere-style="calm" aria-pressed="false">Мягкая</button>
           <button type="button" data-sphere-style="radiant" aria-pressed="true">Сияние</button>
         </div>
-        <button type="button" id="focus-button">Фокус</button>
+        <button type="button" id="focus-button" aria-pressed="false">Фокус</button>
         <span id="dock-status">Загрузка</span>
       </footer>
 
@@ -161,9 +175,12 @@ export class CosmographView extends ItemView {
   private shadow: ShadowRoot | null = null;
   private shell: HTMLElement | null = null;
   private currentGraph: GraphData = { nodes: [], edges: [] };
+  private currentLookup: GraphLookup = buildGraphLookup(this.currentGraph);
   private currentNode: GraphNode | null = null;
   private refreshTimer: number | null = null;
   private isImmersive = false;
+  private isFocusMode = false;
+  private currentFocusDepth = 1;
 
   constructor(leaf: WorkspaceLeaf, private readonly plugin: CosmographPlugin) {
     super(leaf);
@@ -234,6 +251,7 @@ export class CosmographView extends ItemView {
 
   applySettings() {
     this.setSphereStyle(this.plugin.preferences.sphereStyle, false);
+    this.setCosmicBackground(this.plugin.preferences.cosmicBackground, false);
     this.setLabelMode(this.plugin.preferences.labelMode, false);
     this.setGroupDepth(this.plugin.preferences.groupDepth, false);
   }
@@ -244,7 +262,9 @@ export class CosmographView extends ItemView {
     loadingState.hidden = false;
     window.requestAnimationFrame(() => {
       try {
+        if (this.isFocusMode) this.setFocusMode(false);
         this.currentGraph = buildVaultGraph(this.app, this.plugin.preferences.groupDepth);
+        this.currentLookup = buildGraphLookup(this.currentGraph);
         this.graph?.setData(this.currentGraph);
         this.renderGroupList();
         const status = `${this.currentGraph.nodes.length} заметок · ${this.currentGraph.edges.length} связей`;
@@ -269,11 +289,13 @@ export class CosmographView extends ItemView {
   private bindInterface() {
     const searchInput = this.find<HTMLInputElement>("#search-input");
     const immersiveToggle = this.find<HTMLButtonElement>("#immersive-toggle");
+    const cosmicBackgroundToggle = this.find<HTMLButtonElement>("#cosmic-background-toggle");
     const sceneSettings = this.find<HTMLElement>("#scene-settings");
     const sceneSettingsTrigger = this.find<HTMLButtonElement>("#scene-settings-trigger");
     const sceneSettingsMenu = this.find<HTMLElement>("#scene-settings-menu");
     const labelModeButtons = this.findAll<HTMLButtonElement>("[data-label-mode]");
     const groupDepthButtons = this.findAll<HTMLButtonElement>("[data-group-depth]");
+    const focusDepthButtons = this.findAll<HTMLButtonElement>("[data-focus-depth]");
     const sphereStyleButtons = this.findAll<HTMLButtonElement>("[data-sphere-style]");
 
     searchInput.addEventListener("input", () => this.graph?.setSearch(searchInput.value));
@@ -285,9 +307,16 @@ export class CosmographView extends ItemView {
     });
     this.find<HTMLButtonElement>("#focus-button").addEventListener("click", () => {
       const target = this.currentNode ?? this.graph?.getPrimaryNode();
-      if (target) this.graph?.focusNode(target.id);
+      if (target) this.setFocusMode(!this.isFocusMode, target);
     });
+    focusDepthButtons.forEach((button) => button.addEventListener("click", () => {
+      this.setFocusDepth(Number(button.dataset.focusDepth));
+      if (!this.isFocusMode && this.currentNode) this.setFocusMode(true, this.currentNode);
+    }));
     immersiveToggle.addEventListener("click", () => this.setImmersive(!this.isImmersive));
+    cosmicBackgroundToggle.addEventListener("click", () => {
+      this.setCosmicBackground(cosmicBackgroundToggle.getAttribute("aria-pressed") !== "true", true);
+    });
     sceneSettingsTrigger.addEventListener("click", () => this.setSettingsOpen(sceneSettingsMenu.hidden));
     labelModeButtons.forEach((button) => button.addEventListener("click", () => {
       this.setLabelMode(button.dataset.labelMode as LabelMode, true);
@@ -309,6 +338,8 @@ export class CosmographView extends ItemView {
         if (!sceneSettingsMenu.hidden) {
           this.setSettingsOpen(false);
           sceneSettingsTrigger.focus();
+        } else if (this.isFocusMode) {
+          this.setFocusMode(false);
         } else if (this.isImmersive) {
           this.setImmersive(false);
         }
@@ -350,19 +381,18 @@ export class CosmographView extends ItemView {
   }
 
   private linkedNotes(node: GraphNode) {
-    if (node.kind === "cluster") return this.currentGraph.nodes.filter((candidate) => candidate.group === node.group).slice(0, 3);
-    const ids = new Set<string>();
-    this.currentGraph.edges.forEach((edge) => {
-      if (edge.source === node.id) ids.add(edge.target);
-      if (edge.target === node.id) ids.add(edge.source);
-    });
-    return this.currentGraph.nodes.filter((candidate) => ids.has(candidate.id)).slice(0, 3);
+    if (node.kind === "cluster") return (this.currentLookup.nodesByGroup.get(node.group) ?? []).slice(0, 3);
+    return [...(this.currentLookup.adjacency.get(node.id) ?? [])]
+      .map((id) => this.currentLookup.nodesById.get(id))
+      .filter((candidate): candidate is GraphNode => Boolean(candidate))
+      .slice(0, 3);
   }
 
-  private showNode(node: GraphNode | null) {
+  private showNode(node: GraphNode | null, focusCamera = false) {
     this.currentNode = node;
     const notePanel = this.find<HTMLElement>("#note-panel");
     if (!node) {
+      if (this.isFocusMode) this.setFocusMode(false);
       notePanel.hidden = true;
       return;
     }
@@ -371,36 +401,94 @@ export class CosmographView extends ItemView {
     this.find<HTMLElement>("#panel-path").textContent = node.path;
     this.find<HTMLElement>("#panel-group").textContent = node.kind === "cluster" ? "Кластер" : node.group;
     this.find<HTMLButtonElement>("#panel-open").hidden = node.kind === "cluster";
+    void this.updateNodePreview(node);
 
     if (node.kind === "cluster") {
       this.find<HTMLElement>("#metric-label-a").textContent = "Заметок";
       this.find<HTMLElement>("#metric-value-a").textContent = String(node.noteCount ?? 0);
       this.find<HTMLElement>("#metric-label-b").textContent = "Связей";
-      this.find<HTMLElement>("#metric-value-b").textContent = String(this.currentGraph.edges.filter((edge) => {
-        const source = this.currentGraph.nodes.find((candidate) => candidate.id === edge.source);
-        const target = this.currentGraph.nodes.find((candidate) => candidate.id === edge.target);
-        return source?.group === node.group || target?.group === node.group;
-      }).length);
+      this.find<HTMLElement>("#metric-value-b").textContent = String(this.currentLookup.incidentEdgesByGroup.get(node.group) ?? 0);
     } else {
       this.find<HTMLElement>("#metric-label-a").textContent = "Входящие связи";
-      this.find<HTMLElement>("#metric-value-a").textContent = String(this.currentGraph.edges.filter((edge) => edge.target === node.id).length);
+      this.find<HTMLElement>("#metric-value-a").textContent = String(this.currentLookup.incomingCounts.get(node.id) ?? 0);
       this.find<HTMLElement>("#metric-label-b").textContent = "Исходящие связи";
-      this.find<HTMLElement>("#metric-value-b").textContent = String(this.currentGraph.edges.filter((edge) => edge.source === node.id).length);
+      this.find<HTMLElement>("#metric-value-b").textContent = String(this.currentLookup.outgoingCounts.get(node.id) ?? 0);
     }
 
     const recentNotes = this.find<HTMLUListElement>("#recent-notes");
     recentNotes.replaceChildren(...this.linkedNotes(node).map((linkedNode) => {
       const item = document.createElement("li");
       item.textContent = linkedNode.title;
-      item.title = "Открыть заметку";
+      item.title = "Показать на сфере";
       item.tabIndex = 0;
-      item.addEventListener("click", () => void this.openNote(linkedNode));
+      item.addEventListener("click", () => this.showNode(linkedNode, true));
       item.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") void this.openNote(linkedNode);
+        if (event.key === "Enter" || event.key === " ") this.showNode(linkedNode, true);
       });
       return item;
     }));
     notePanel.hidden = false;
+    if (this.isFocusMode) this.setFocusMode(true, node);
+    else if (focusCamera) this.graph?.focusNode(node.id);
+  }
+
+  private setFocusDepth(depth: number) {
+    this.currentFocusDepth = Math.min(3, Math.max(1, Math.trunc(depth) || 1));
+    this.findAll<HTMLButtonElement>("[data-focus-depth]").forEach((button) => {
+      const active = Number(button.dataset.focusDepth) === this.currentFocusDepth;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+    if (this.isFocusMode && this.currentNode) this.setFocusMode(true, this.currentNode);
+  }
+
+  private setFocusMode(active: boolean, node: GraphNode | null = this.currentNode) {
+    const button = this.find<HTMLButtonElement>("#focus-button");
+    const summary = this.find<HTMLElement>("#focus-summary");
+    if (!active || !node) {
+      this.isFocusMode = false;
+      this.graph?.clearFocus();
+      this.shell?.classList.remove("is-focus-mode");
+      button.classList.remove("is-active");
+      button.setAttribute("aria-pressed", "false");
+      button.textContent = "Фокус";
+      summary.textContent = "Ближайшие связи заметки";
+      return;
+    }
+
+    this.isFocusMode = true;
+    const noteCount = this.graph?.setFocus(node.id, this.currentFocusDepth) ?? 0;
+    this.shell?.classList.add("is-focus-mode");
+    button.classList.add("is-active");
+    button.setAttribute("aria-pressed", "true");
+    button.textContent = "Выйти";
+    summary.textContent = `${noteCount} ${noteCount === 1 ? "заметка" : noteCount < 5 ? "заметки" : "заметок"} в фокусе`;
+  }
+
+  private async updateNodePreview(node: GraphNode) {
+    const preview = this.find<HTMLElement>("#panel-preview");
+    if (node.kind === "cluster") {
+      preview.hidden = true;
+      preview.textContent = "";
+      return;
+    }
+    const file = this.app.vault.getAbstractFileByPath(node.path);
+    if (!(file instanceof TFile)) {
+      preview.hidden = true;
+      return;
+    }
+    const content = await this.app.vault.cachedRead(file);
+    if (this.currentNode?.id !== node.id) return;
+    const plain = content
+      .replace(/^---\s*[\s\S]*?\n---\s*/u, "")
+      .replace(/```[\s\S]*?```/gu, "")
+      .replace(/!?(?:\[([^\]]*)\]\([^)]*\)|\[\[([^\]|]*)(?:\|([^\]]*))?\]\])/gu, "$1$3$2")
+      .replace(/^[#>*+-]+\s*/gmu, "")
+      .replace(/[*_~`]/gu, "")
+      .replace(/\s+/gu, " ")
+      .trim();
+    preview.textContent = plain.length > 190 ? `${plain.slice(0, 187).trimEnd()}...` : plain;
+    preview.hidden = plain.length === 0;
   }
 
   private showTooltip(node: GraphNode | null, x: number, y: number) {
@@ -436,6 +524,18 @@ export class CosmographView extends ItemView {
     });
     if (persist) {
       this.plugin.preferences.sphereStyle = style;
+      void this.plugin.saveSettings();
+    }
+  }
+
+  private setCosmicBackground(enabled: boolean, persist: boolean) {
+    this.graph?.setCosmicBackground(enabled);
+    const button = this.find<HTMLButtonElement>("#cosmic-background-toggle");
+    button.classList.toggle("is-active", enabled);
+    button.setAttribute("aria-pressed", String(enabled));
+    button.querySelector<HTMLElement>(".scene-menu-action__value")!.textContent = enabled ? "Выключить" : "Включить";
+    if (persist) {
+      this.plugin.preferences.cosmicBackground = enabled;
       void this.plugin.saveSettings();
     }
   }

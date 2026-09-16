@@ -45,6 +45,9 @@ CosmoGraph is designed as an immersive alternative to the traditional Obsidian g
 - Groups notes into visual clusters based on their folders.
 - Maps nodes and links onto a procedural planetary surface.
 - Generates irregular terrain, craters, particles, atmosphere, and depth.
+- Adds an optional procedural cosmic backdrop with nebulae, distant galaxies, and stars.
+- Adds neighborhood focus with one to three connection hops for tracing related ideas.
+- Adapts rendering, labels, and edge budgets for large and very large vaults.
 - Supports orbit rotation, inertial dragging, zoom, hover, search, and selection.
 - Smoothly rotates the sphere when a note is selected.
 - Opens real notes directly from the graph details panel.
@@ -96,7 +99,10 @@ Restart Obsidian, open **Settings → Community plugins**, and enable **CosmoGra
 - Select a node to focus it and inspect its links.
 - Select **Open note** in the details panel to open the Markdown file.
 - Use the folder list or search field to filter nodes.
+- Use **Focus** and choose depth **1–3** to isolate the neighborhood around a note or cluster.
+- Select a related note in the details panel to move through the graph without leaving the scene.
 - Switch between **Calm** and **Radiant** visual modes.
+- Enable **Cosmic background** from the scene menu or plugin settings when you want a richer deep-space backdrop.
 - Select **Scene** to hide the interface and leave only the knowledge planet.
 
 ## Run the web prototype

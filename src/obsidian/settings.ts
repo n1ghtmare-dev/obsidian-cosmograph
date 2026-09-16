@@ -3,6 +3,7 @@ import type { LabelMode, SphereStyle } from "../graph/SphericalGraph";
 
 export type CosmographSettings = {
   sphereStyle: SphereStyle;
+  cosmicBackground: boolean;
   labelMode: LabelMode;
   groupDepth: number;
   openNotesInNewTab: boolean;
@@ -11,6 +12,7 @@ export type CosmographSettings = {
 
 export const DEFAULT_SETTINGS: CosmographSettings = {
   sphereStyle: "radiant",
+  cosmicBackground: false,
   labelMode: "important",
   groupDepth: 1,
   openNotesInNewTab: true,
@@ -47,6 +49,17 @@ export class CosmographSettingTab extends PluginSettingTab {
         }));
 
     new Setting(containerEl)
+      .setName("Cosmic background")
+      .setDesc("Add procedural nebulae, distant galaxies, and a richer star field behind the knowledge planet.")
+      .addToggle((toggle) => toggle
+        .setValue(this.controller.preferences.cosmicBackground)
+        .onChange(async (value) => {
+          this.controller.preferences.cosmicBackground = value;
+          await this.controller.saveSettings();
+          this.controller.applySettingsToViews();
+        }));
+
+    new Setting(containerEl)
       .setName("Node labels")
       .setDesc("Choose whether to hide labels, show important nodes, or show every node.")
       .addDropdown((dropdown) => dropdown
@@ -64,9 +77,9 @@ export class CosmographSettingTab extends PluginSettingTab {
       .setName("Cluster folder depth")
       .setDesc("Choose how many folder levels define a cluster. Depth 1 keeps each top-level folder together; depth 2 splits it into subfolder clusters.")
       .addDropdown((dropdown) => dropdown
-        .addOption("1", "1 — top-level folder")
-        .addOption("2", "2 — subfolder")
-        .addOption("3", "3 — sub-subfolder")
+        .addOption("1", "1 - top-level folder")
+        .addOption("2", "2 - subfolder")
+        .addOption("3", "3 - sub-subfolder")
         .setValue(String(this.controller.preferences.groupDepth))
         .onChange(async (value) => {
           this.controller.preferences.groupDepth = Number(value);
