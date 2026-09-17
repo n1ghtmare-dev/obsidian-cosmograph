@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/cosmograph-readme-hero-v2.jpg" alt="CosmoGraph interactive 3D spherical knowledge graph visualizing an Obsidian vault" width="100%" />
+  <img src="docs/assets/cosmograph-readme-hero-v3.jpg" alt="CosmoGraph interactive 3D spherical knowledge graph visualizing an Obsidian vault" width="100%" />
 </div>
 
 <h1 align="center">CosmoGraph</h1>
